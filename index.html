@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Sistema de Controle de Presos</title>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getDatabase, ref, onValue, push, update, remove, serverTimestamp }
+  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyCAEhARwMkl2mabrku0BsDHBVGXfq_3bSg",
+  authDomain: "monitoramento-eletronico-9dfbd.firebaseapp.com",
+  databaseURL: "https://monitoramento-eletronico-9dfbd-default-rtdb.firebaseio.com",
+  projectId: "monitoramento-eletronico-9dfbd",
+  storageBucket: "monitoramento-eletronico-9dfbd.firebasestorage.app",
+  messagingSenderId: "374021798667",
+  appId: "1:374021798667:web:59413e5700d2e73264400e"
+};
+
+const app = initializeApp(firebaseConfig);
+const db  = getDatabase(app);
+const presosRef = ref(db, "presos");
+
+let allPresos  = [];
+let editingKey = null;
+
+function calcDias(str) {
+  if (!str) return null;
+  const [d,m,y] = str.split("/").map(Number);
+  if (!d||!m||!y) return null;
+  const diff = Math.floor((new Date() - new Date(y,m-1,d)) / 86400000);
+  return diff >= 0 ? diff : null;
+}
+
+function fmtDate(ts) {
+  if (!ts) return "";
+  const d = new Date(ts);
+  return d.toLocaleDateString("pt-BR") + ", " +
+         d.toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
+}
+
+function esc(s) {
+  return String(s||"")
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;")
+    .replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+
+const TIPO_CSS   = {ap:"tap",apf:"tapf",mpu:"tmpu",ip:"tip"};
+const TIPO_LABEL = {ap:"AP",apf:"APF",mpu:"MPU",ip:"IP"};
+const PROC_FIELD = {ap:"ap",apf:"apf",mpu:"mpu",ip:"ip"};
+
+function decretoCell(p) {
+  const t = (p.processoPrincipal||"").toLowerCase();
+  if (!t || !TIPO_LABEL[t]) return '<span style="color:#94a3b8">—</span>';
+  const num = p[PROC_FIELD[t]] || "";
+  return `<span class="ptag ${TIPO_CSS[t]}">${TIPO_LABEL[t]}</span>`
+       + (num ? `<span class="proc-num">${esc(num)}</span>` : "");
+}
+
+onValue(presosRef, snap => {
+  allPresos = [];
+  snap.forEach(c => allPresos.push({_key:c.key,...c.val()}));
+  document.getElementById("lastMod").textContent =
+    "Última modificação em " + fmtDate(Date.now());
+  renderTable();
+});
+
+function renderTable() {
+  const q      = (document.getElementById("searchInput")?.value||"").toLowerCase();
+  const filtro = document.querySelector(".filter-btn.active")?.dataset.filtro||"todos";
+  const ordem  = document.getElementById("ordenar")?.value||"alfa";
+
+  let lista = allPresos.filter(p =>
+    [p.nome,p.ap,p.apf,p.mpu,p.ip,p.observacoes].join(" ").toLowerCase().includes(q)
+  );
+  if (filtro==="com") lista = lista.filter(p=>p.cumprimento==="COM");
+  if (filtro==="sem") lista = lista.filter(p=>p.cumprimento==="SEM");
+  if (ordem==="alfa") lista.sort((a,b)=>(a.nome||"").localeCompare(b.nome||"","pt-BR"));
+  if (ordem==="data") lista.sort((a,b)=>(calcDias(b.dataPrisao)||0)-(calcDias(a.dataPrisao)||0));
+
+  const totalCom = allPresos.filter(p=>p.cumprimento==="COM").length;
+  const totalSem = allPresos.filter(p=>p.cumprimento==="SEM").length;
+  document.getElementById("btnTodos").textContent = `Todos (${allPresos.length})`;
+  document.getElementById("btnCom").textContent   = `Com Cumprimento (${totalCom})`;
+  document.getElementById("btnSem").textContent   = `Sem Cumprimento (${totalSem})`;
+  document.getElementById("footerTotal").textContent =
+    `Total: ${allPresos.length} | Exibindo: ${lista.length} | Com Cumprimento: ${totalCom} | Sem Cumprimento: ${totalSem}`;
+
+  const tbody = document.getElementById("tbody");
+  if (!lista.length) {
+    tbody.innerHTML = `<tr><td colspan="7" class="empty-row">Nenhum registro encontrado.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = lista.map((p,i) => {
+    const dias    = calcDias(p.dataPrisao);
+    const diasStr = dias !== null ? `${dias} dias` : "—";
+    const dataRed = dias !== null && dias > 60;
+    const pp      = (p.processoPrincipal||"").toLowerCase();
+
+    const procs = [
+      {id:"ap", label:"AP", css:"tap"},
+      {id:"apf",label:"APF",css:"tapf"},
+      {id:"mpu",label:"MPU",css:"tmpu"},
+      {id:"ip", label:"IP", css:"tip"},
+    ];
+    const temProcs = procs.some(x=>(p[x.id]||"").trim());
+
+    const accRows = procs.map(x => {
+      const isDec = pp===x.id;
+      const num   = p[x.id]||"";
+      return `<div class="acc-proc-row${isDec?" acc-sel":""}">
+        <span class="ptag ${x.css}">${x.label}</span>
+        <span class="acc-num">${num ? esc(num) : '<em class="acc-empty">não cadastrado</em>'}</span>
+        ${isDec?'<span class="dbadge">⚑ decreto</span>':""}
+      </div>`;
+    }).join("");
+
+    return `<tr class="row-main${i%2===1?" row-alt":""}" onclick="toggleAcc('${p._key}')">
+      <td style="text-align:center"><span class="badge badge-${(p.cumprimento||"SEM").toLowerCase()}">${p.cumprimento||"SEM"}</span></td>
+      <td class="nome-cell"><i class="chev" id="chev-${p._key}">›</i>${esc(p.nome||"")}${temProcs?'<div class="hint-click">clique para ver processos</div>':""}</td>
+      <td>${decretoCell(p)}</td>
+      <td class="${dataRed?"data-red":"data-normal"}">${esc(p.dataPrisao||"—")}</td>
+      <td class="dur-cell">${diasStr}</td>
+      <td class="obs-cell">${esc(p.observacoes||"")}</td>
+      <td class="acoes-cell">
+        <button class="btn-icon" onclick="event.stopPropagation();openEdit('${p._key}')">✏️</button>
+        <button class="btn-icon" onclick="event.stopPropagation();confirmDelete('${p._key}','${esc(p.nome||"")}')">🗑️</button>
+      </td>
+    </tr>
+    <tr class="acc-row" id="acc-${p._key}">
+      <td colspan="7" class="acc-td">
+        <div class="acc-inner">
+          <div class="acc-title">Processos correlacionados</div>
+          ${accRows}
+        </div>
+      </td>
+    </tr>`;
+  }).join("");
+}
+
+window.toggleAcc = function(key) {
+  document.getElementById("acc-"+key).classList.toggle("acc-open");
+  document.getElementById("chev-"+key).classList.toggle("chev-open");
+};
+
+window.openNew = function() {
+  editingKey = null;
+  document.getElementById("modalTitle").textContent = "Novo preso";
+  clearForm();
+  document.getElementById("modal").style.display = "flex";
+  setTimeout(()=>document.getElementById("fNome").focus(),50);
+};
+
+window.openEdit = function(key) {
+  const p = allPresos.find(x=>x._key===key);
+  if (!p) return;
+  editingKey = key;
+  document.getElementById("modalTitle").textContent = "Editar preso";
+  document.getElementById("fNome").value        = p.nome||"";
+  document.getElementById("fCumprimento").value = p.cumprimento||"SEM";
+  document.getElementById("fData").value        = p.dataPrisao||"";
+  document.getElementById("fAp").value          = p.ap||"";
+  document.getElementById("fApf").value         = p.apf||"";
+  document.getElementById("fMpu").value         = p.mpu||"";
+  document.getElementById("fIp").value          = p.ip||"";
+  document.getElementById("fObs").value         = p.observacoes||"";
+  const pp = (p.processoPrincipal||"").toLowerCase();
+  ["ap","apf","mpu","ip"].forEach(t => setDecRow(t, pp===t));
+  document.getElementById("modal").style.display = "flex";
+  setTimeout(()=>document.getElementById("fNome").focus(),50);
+};
+
+window.closeModal = function() {
+  document.getElementById("modal").style.display = "none";
+};
+
+function clearForm() {
+  ["fNome","fAp","fApf","fMpu","fIp","fData","fObs"].forEach(id=>document.getElementById(id).value="");
+  document.getElementById("fCumprimento").value = "SEM";
+  ["ap","apf","mpu","ip"].forEach(t=>setDecRow(t,false));
+}
+
+function setDecRow(t, active) {
+  const row = document.getElementById("prow-"+t);
+  const rad = document.getElementById("rad-"+t);
+  const bdg = document.getElementById("pdec-"+t);
+  if (row) row.classList.toggle("prow-sel", active);
+  if (rad) rad.checked = active;
+  if (bdg) { bdg.textContent = active?"⚑ decreto":""; bdg.className = active?"dbadge":""; }
+}
+
+window.selectDec = function(tipo) {
+  ["ap","apf","mpu","ip"].forEach(t => setDecRow(t, t===tipo));
+};
+
+window.saveForm = async function() {
+  const nome = document.getElementById("fNome").value.trim();
+  if (!nome) { alert("Nome é obrigatório."); return; }
+  const pp = ["ap","apf","mpu","ip"].find(t=>document.getElementById("rad-"+t)?.checked)||"";
+  const data = {
+    nome,
+    cumprimento:       document.getElementById("fCumprimento").value,
+    dataPrisao:        document.getElementById("fData").value.trim(),
+    ap:                document.getElementById("fAp").value.trim(),
+    apf:               document.getElementById("fApf").value.trim(),
+    mpu:               document.getElementById("fMpu").value.trim(),
+    ip:                document.getElementById("fIp").value.trim(),
+    processoPrincipal: pp,
+    observacoes:       document.getElementById("fObs").value.trim(),
+    updatedAt:         serverTimestamp()
+  };
+  try {
+    if (editingKey) {
+      await update(ref(db,`presos/${editingKey}`), data);
+    } else {
+      data.createdAt = serverTimestamp();
+      await push(presosRef, data);
+    }
+    closeModal();
+  } catch(e) { alert("Erro ao salvar: "+e.message); }
+};
+
+window.confirmDelete = function(key, nome) {
+  if (confirm(`Excluir o registro de "${nome}"?`))
+    remove(ref(db,`presos/${key}`)).catch(e=>alert("Erro: "+e.message));
+};
+
+window.exportCSV = function() {
+  const cols = ["Nome","Cumprimento","Processo Decreto","AP","APF","MPU","IP","Data Prisão","Duração (dias)","Observações"];
+  const rows = allPresos.map(p => {
+    const dias = calcDias(p.dataPrisao);
+    return [p.nome,p.cumprimento,p.processoPrincipal,p.ap,p.apf,p.mpu,p.ip,p.dataPrisao,dias??"",p.observacoes]
+      .map(v=>`"${String(v||"").replace(/"/g,'""')}"`);
+  });
+  const csv = [cols.map(c=>`"${c}"`).join(","),...rows.map(r=>r.join(","))].join("\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob(["\uFEFF"+csv],{type:"text/csv;charset=utf-8;"}));
+  a.download = `presos_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+};
+
+window.manualRefresh = function() {
+  const btn = document.getElementById("btnAtualizar");
+  btn.disabled=true; btn.textContent="⟳ Atualizando…";
+  setTimeout(()=>{renderTable();btn.disabled=false;btn.textContent="⟳ Atualizar";},600);
+};
+
+window.syncData = function() {
+  const btn = document.getElementById("btnSync");
+  btn.disabled=true; btn.textContent="⟳ Sincronizando…";
+  setTimeout(()=>{renderTable();btn.disabled=false;btn.textContent="⇄ Sync Data";},800);
+};
+
+document.addEventListener("DOMContentLoaded", () => {
+  document.getElementById("searchInput").addEventListener("input", renderTable);
+  document.getElementById("ordenar").addEventListener("change", renderTable);
+  document.querySelectorAll(".filter-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".filter-btn").forEach(b=>b.classList.remove("active"));
+      btn.classList.add("active");
+      renderTable();
+    });
+  });
+  document.getElementById("modal").addEventListener("click", e=>{
+    if (e.target===document.getElementById("modal")) closeModal();
+  });
+  document.addEventListener("keydown", e=>{ if(e.key==="Escape") closeModal(); });
+});
+</script>
+
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap');
+:root{
+  --bg:#f4f6fa;--surface:#fff;--header:#1a2744;
+  --primary:#7c3aed;--primary-h:#6d28d9;
+  --border:#e2e8f0;--muted:#94a3b8;--text:#1e293b;--text2:#475569;
+  --row-alt:#f8fafc;--red:#dc2626;
+  --tap-bg:#dbeafe;--tap-c:#1e40af;
+  --tapf-bg:#ede9fe;--tapf-c:#5b21b6;
+  --tmpu-bg:#fce7f3;--tmpu-c:#9d174d;
+  --tip-bg:#d1fae5;--tip-c:#065f46;
+  --dec-bg:#fef3c7;--dec-c:#b45309;--dec-br:#fde68a;
+  --com-bg:#d1fae5;--com-c:#065f46;
+  --sem-bg:#fef3c7;--sem-c:#b45309;
+  --radius:8px;--radius-sm:5px;
+  --mono:'IBM Plex Mono',monospace;
+  --sans:'IBM Plex Sans',sans-serif;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:100vh;}
+
+.app-header{background:var(--header);color:#fff;padding:.85rem 1.5rem;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100;box-shadow:0 2px 8px rgba(0,0,0,.2);}
+.header-left h1{font-size:1.2rem;font-weight:700;}
+.header-left p{font-size:.67rem;color:var(--muted);margin-top:.1rem;font-family:var(--mono);}
+.btn-shared{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);color:#fff;padding:.35rem .85rem;border-radius:var(--radius-sm);cursor:pointer;font-size:.76rem;font-family:var(--sans);display:flex;align-items:center;gap:.4rem;}
+
+.toolbar{background:var(--surface);border-bottom:1px solid var(--border);padding:.6rem 1.5rem;display:flex;align-items:center;gap:.45rem;flex-wrap:wrap;}
+.search-wrap{position:relative;flex:1;min-width:180px;max-width:400px;}
+.search-wrap svg{position:absolute;left:.6rem;top:50%;transform:translateY(-50%);pointer-events:none;}
+.search-input{width:100%;padding:.42rem .6rem .42rem 1.9rem;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-family:var(--sans);font-size:.8rem;color:var(--text);outline:none;}
+.search-input:focus{border-color:var(--primary);}
+.btn{padding:.4rem .85rem;border-radius:var(--radius-sm);border:1px solid transparent;cursor:pointer;font-family:var(--sans);font-size:.76rem;font-weight:600;display:inline-flex;align-items:center;gap:.3rem;white-space:nowrap;transition:opacity .15s;}
+.btn:hover{opacity:.85;}
+.btn-atualizar{background:#fef3c7;color:#b45309;border-color:#fde68a;}
+.btn-sync{background:#dbeafe;color:#1d4ed8;border-color:#bfdbfe;}
+.btn-novo{background:#dcfce7;color:#15803d;border-color:#bbf7d0;}
+.btn-csv{background:#e0f2fe;color:#0369a1;border-color:#bae6fd;}
+
+.filters-bar{background:var(--surface);border-bottom:1px solid var(--border);padding:.45rem 1.5rem;display:flex;align-items:center;gap:.38rem;flex-wrap:wrap;}
+.filter-btn{padding:.25rem .7rem;border-radius:20px;border:1.5px solid var(--border);background:#fff;cursor:pointer;font-family:var(--sans);font-size:.74rem;font-weight:500;color:var(--text2);transition:all .18s;}
+.filter-btn.active{background:var(--primary);border-color:var(--primary);color:#fff;}
+.filter-btn:not(.active):hover{border-color:var(--primary);color:var(--primary);}
+.order-wrap{margin-left:auto;display:flex;align-items:center;gap:.38rem;font-size:.74rem;color:var(--text2);}
+.order-wrap select{padding:.25rem .48rem;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-family:var(--sans);font-size:.74rem;color:var(--text);outline:none;}
+
+.table-wrap{padding:.9rem 1.5rem;overflow-x:auto;}
+table{width:100%;border-collapse:collapse;background:var(--surface);border-radius:var(--radius);overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.07);font-size:.79rem;}
+thead tr{background:#f8fafc;border-bottom:2px solid var(--border);}
+th{padding:.55rem .85rem;text-align:left;font-weight:600;color:var(--text2);font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap;}
+tbody tr.row-main{cursor:pointer;transition:background .12s;}
+tbody tr.row-main:hover{background:#f1f5f9 !important;}
+tbody tr.row-alt{background:var(--row-alt);}
+td{padding:.68rem .85rem;vertical-align:top;border-bottom:1px solid var(--border);}
+
+.nome-cell{font-weight:600;text-transform:uppercase;font-size:.77rem;line-height:1.4;min-width:150px;}
+.hint-click{font-size:.63rem;color:var(--muted);font-weight:400;margin-top:2px;text-transform:none;}
+.data-red{font-family:var(--mono);font-size:.74rem;color:var(--red);font-weight:500;}
+.data-normal{font-family:var(--mono);font-size:.74rem;color:var(--text2);}
+.dur-cell{font-family:var(--mono);font-size:.74rem;color:var(--text2);}
+.obs-cell{font-size:.74rem;color:var(--text2);line-height:1.45;max-width:280px;}
+.acoes-cell{white-space:nowrap;text-align:center;}
+.empty-row{text-align:center;padding:2.5rem;color:var(--muted);}
+.proc-num{font-family:var(--mono);font-size:.7rem;color:var(--text);margin-top:3px;display:block;}
+
+.acc-row{display:none;}
+.acc-row.acc-open{display:table-row;}
+.acc-td{padding:0 !important;border-bottom:1px solid var(--border) !important;}
+.acc-inner{background:#f8f5ff;border-left:3px solid var(--primary);padding:.55rem .9rem .55rem 1.1rem;}
+.acc-title{font-size:.63rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:.38rem;}
+.acc-proc-row{display:flex;align-items:center;gap:8px;padding:3px 5px;border-radius:var(--radius-sm);border:.5px solid transparent;}
+.acc-proc-row.acc-sel{background:#fff;border-color:var(--primary);}
+.acc-num{font-family:var(--mono);font-size:.7rem;color:var(--text);flex:1;}
+.acc-empty{color:var(--muted);font-style:italic;font-size:.68rem;}
+
+.chev{display:inline-block;transition:transform .2s;font-style:normal;font-size:.82rem;margin-right:4px;color:var(--muted);}
+.chev-open{transform:rotate(90deg);}
+
+.badge{display:inline-block;padding:.17rem .48rem;border-radius:4px;font-size:.65rem;font-weight:700;font-family:var(--mono);}
+.badge-com{background:var(--com-bg);color:var(--com-c);}
+.badge-sem{background:var(--sem-bg);color:var(--sem-c);}
+.ptag{font-size:.65rem;font-weight:700;padding:2px 7px;border-radius:3px;font-family:var(--mono);display:inline-block;white-space:nowrap;}
+.tap{background:var(--tap-bg);color:var(--tap-c);}
+.tapf{background:var(--tapf-bg);color:var(--tapf-c);}
+.tmpu{background:var(--tmpu-bg);color:var(--tmpu-c);}
+.tip{background:var(--tip-bg);color:var(--tip-c);}
+.dbadge{background:var(--dec-bg);color:var(--dec-c);border:.5px solid var(--dec-br);font-size:.65rem;font-weight:700;padding:1px 7px;border-radius:3px;font-family:var(--mono);}
+
+.btn-icon{background:none;border:none;cursor:pointer;font-size:.88rem;padding:.2rem .28rem;border-radius:4px;transition:background .12s;}
+.btn-icon:hover{background:var(--border);}
+
+.app-footer{background:var(--surface);border-top:1px solid var(--border);padding:.48rem 1.5rem;display:flex;align-items:center;justify-content:space-between;font-size:.68rem;color:var(--text2);font-family:var(--mono);position:sticky;bottom:0;}
+.sync-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:#16a34a;margin-right:.3rem;animation:pulse 2s infinite;}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+
+#modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:999;align-items:center;justify-content:center;padding:1rem;}
+.modal-box{background:var(--surface);border-radius:var(--radius);box-shadow:0 10px 40px rgba(0,0,0,.18);width:100%;max-width:540px;max-height:92vh;overflow-y:auto;animation:slideUp .2s ease;}
+@keyframes slideUp{from{transform:translateY(14px);opacity:0}to{transform:translateY(0);opacity:1}}
+.modal-header{padding:.9rem 1.2rem;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;}
+.modal-header h2{font-size:.95rem;font-weight:700;}
+.modal-close{background:none;border:none;font-size:1rem;cursor:pointer;color:var(--muted);padding:.2rem .4rem;border-radius:4px;}
+.modal-close:hover{color:var(--text);background:var(--bg);}
+.modal-body{padding:1rem 1.2rem;display:flex;flex-direction:column;gap:.85rem;}
+.sec-label{font-size:.66rem;font-weight:600;letter-spacing:.09em;color:var(--muted);text-transform:uppercase;padding-bottom:.28rem;border-bottom:1px solid var(--border);margin-bottom:.55rem;}
+.field-group{display:flex;flex-direction:column;gap:.25rem;}
+.field-group label{font-size:.7rem;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.04em;}
+.field-group input,.field-group select,.field-group textarea{padding:.45rem .62rem;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-family:var(--sans);font-size:.82rem;color:var(--text);outline:none;transition:border-color .15s;background:#fff;}
+.field-group input:focus,.field-group select:focus,.field-group textarea:focus{border-color:var(--primary);}
+.field-group textarea{resize:vertical;min-height:78px;}
+.row-2{display:grid;grid-template-columns:1fr 1fr;gap:.7rem;}
+.prow-hint{font-size:.67rem;color:var(--muted);margin-bottom:.42rem;}
+.proc-rows{display:flex;flex-direction:column;gap:.36rem;}
+.prow{display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:var(--radius-sm);border:1.5px solid var(--border);background:#fff;cursor:pointer;transition:border-color .15s,background .15s;}
+.prow:hover{border-color:#c4b5fd;}
+.prow-sel{border-color:var(--primary);background:#faf8ff;}
+.prow input[type=radio]{accent-color:var(--primary);width:13px;height:13px;flex-shrink:0;cursor:pointer;}
+.prow .ptag{flex-shrink:0;width:36px;text-align:center;}
+.prow input[type=text]{flex:1;border:none;background:transparent;outline:none;font-family:var(--mono);font-size:.75rem;color:var(--text);padding:0;}
+.prow input[type=text]::placeholder{color:var(--muted);font-style:italic;}
+.modal-footer{padding:.78rem 1.2rem;border-top:1px solid var(--border);display:flex;gap:.45rem;justify-content:flex-end;}
+.btn-cancel{background:var(--bg);color:var(--text2);border:1.5px solid var(--border);}
+.btn-save{background:var(--primary);color:#fff;border-color:var(--primary);}
+.btn-save:hover{background:var(--primary-h);opacity:1;}
+
+@media(max-width:768px){
+  .app-header,.toolbar,.filters-bar,.table-wrap,.app-footer{padding-left:.9rem;padding-right:.9rem;}
+  .row-2{grid-template-columns:1fr;}
+}
+</style>
+</head>
+<body>
+
+<header class="app-header">
+  <div class="header-left">
+    <h1>Sistema de Gestão de Presos</h1>
+    <p id="lastMod">Carregando…</p>
+  </div>
+  <button class="btn-shared">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+    Modo Compartilhado
+  </button>
+</header>
+
+<div class="toolbar">
+  <div class="search-wrap">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+    <input id="searchInput" class="search-input" type="text" placeholder="Buscar…" autocomplete="off" />
+  </div>
+  <button id="btnAtualizar" class="btn btn-atualizar" onclick="manualRefresh()">⟳ Atualizar</button>
+  <button id="btnSync"      class="btn btn-sync"      onclick="syncData()">⇄ Sync Data</button>
+  <button                   class="btn btn-novo"      onclick="openNew()">+ Novo</button>
+  <button                   class="btn btn-csv"       onclick="exportCSV()">↓ Exportar CSV</button>
+</div>
+
+<div class="filters-bar">
+  <button id="btnTodos" class="filter-btn active" data-filtro="todos">Todos</button>
+  <button id="btnCom"   class="filter-btn"        data-filtro="com">Com Cumprimento</button>
+  <button id="btnSem"   class="filter-btn"        data-filtro="sem">Sem Cumprimento</button>
+  <div class="order-wrap">
+    <span>Ordenar por:</span>
+    <select id="ordenar">
+      <option value="alfa">Ordem Alfabética</option>
+      <option value="data">Data de Prisão</option>
+    </select>
+  </div>
+</div>
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Status</th>
+        <th>Custodiado</th>
+        <th>Processo c/ Decreto</th>
+        <th>Data Prisão</th>
+        <th>Duração</th>
+        <th>Observações</th>
+        <th>Ações</th>
+      </tr>
+    </thead>
+    <tbody id="tbody">
+      <tr><td colspan="7" class="empty-row">Conectando ao Firebase…</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<footer class="app-footer">
+  <span id="footerTotal">—</span>
+  <span><span class="sync-dot"></span>Sincronização a cada 2 segundos</span>
+</footer>
+
+<div id="modal">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h2 id="modalTitle">Novo preso</h2>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body">
+
+      <div>
+        <div class="sec-label">Dados do custodiado</div>
+        <div style="display:flex;flex-direction:column;gap:.58rem;">
+          <div class="field-group">
+            <label>Nome completo *</label>
+            <input id="fNome" type="text" placeholder="Nome completo em maiúsculas" />
+          </div>
+          <div class="row-2">
+            <div class="field-group">
+              <label>Status</label>
+              <select id="fCumprimento">
+                <option value="SEM">SEM cumprimento</option>
+                <option value="COM">COM cumprimento</option>
+              </select>
+            </div>
+            <div class="field-group">
+              <label>Data de prisão</label>
+              <input id="fData" type="text" placeholder="DD/MM/AAAA" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div class="sec-label">Processos</div>
+        <div class="prow-hint">Preencha os processos e marque onde a prisão foi decretada</div>
+        <div class="proc-rows">
+          <div class="prow" id="prow-ap" onclick="selectDec('ap')">
+            <input type="radio" id="rad-ap" name="decreto" onclick="event.stopPropagation();selectDec('ap')" />
+            <span class="ptag tap">AP</span>
+            <input type="text" id="fAp" placeholder="Número da Ação Penal" onclick="event.stopPropagation()" />
+            <span id="pdec-ap"></span>
+          </div>
+          <div class="prow" id="prow-apf" onclick="selectDec('apf')">
+            <input type="radio" id="rad-apf" name="decreto" onclick="event.stopPropagation();selectDec('apf')" />
+            <span class="ptag tapf">APF</span>
+            <input type="text" id="fApf" placeholder="Número do APF" onclick="event.stopPropagation()" />
+            <span id="pdec-apf"></span>
+          </div>
+          <div class="prow" id="prow-mpu" onclick="selectDec('mpu')">
+            <input type="radio" id="rad-mpu" name="decreto" onclick="event.stopPropagation();selectDec('mpu')" />
+            <span class="ptag tmpu">MPU</span>
+            <input type="text" id="fMpu" placeholder="Número da MPU" onclick="event.stopPropagation()" />
+            <span id="pdec-mpu"></span>
+          </div>
+          <div class="prow" id="prow-ip" onclick="selectDec('ip')">
+            <input type="radio" id="rad-ip" name="decreto" onclick="event.stopPropagation();selectDec('ip')" />
+            <span class="ptag tip">IP</span>
+            <input type="text" id="fIp" placeholder="Número do IP" onclick="event.stopPropagation()" />
+            <span id="pdec-ip"></span>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div class="sec-label">Observações</div>
+        <div class="field-group">
+          <textarea id="fObs" placeholder="Histórico, decisões, audiências…"></textarea>
+        </div>
+      </div>
+
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-cancel" onclick="closeModal()">Cancelar</button>
+      <button class="btn btn-save"   onclick="saveForm()">💾 Salvar</button>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
