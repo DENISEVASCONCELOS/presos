@@ -7,7 +7,7 @@
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getDatabase, ref, onValue, push, update, remove, serverTimestamp }
+import { getDatabase, ref, onValue, get, push, update, remove, serverTimestamp }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 
 const firebaseConfig = {
@@ -62,11 +62,16 @@ function decretoCell(p) {
 
 onValue(presosRef, snap => {
   allPresos = [];
-  snap.forEach(c => allPresos.push({_key:c.key,...c.val()}));
+  if (snap.exists()) {
+    snap.forEach(c => {
+      const val = c.val();
+      if (val && val.nome) allPresos.push({_key:c.key,...val});
+    });
+  }
   document.getElementById("lastMod").textContent =
     "Última modificação em " + fmtDate(Date.now());
   renderTable();
-});
+}, { onlyOnce: false });
 
 function renderTable() {
   const q      = (document.getElementById("searchInput")?.value||"").toLowerCase();
