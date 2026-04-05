@@ -49,9 +49,9 @@ function esc(s) {
     .replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 }
 
-const TIPO_CSS   = {ap:"tap",apf:"tapf",mpu:"tmpu",ip:"tip"};
-const TIPO_LABEL = {ap:"AP",apf:"APF",mpu:"MPU",ip:"IP"};
-const PROC_FIELD = {ap:"ap",apf:"apf",mpu:"mpu",ip:"ip"};
+const TIPO_CSS   = {ap:"tap",apf:"tapf",mpu:"tmpu",ip:"tip",outro:"toutro"};
+const TIPO_LABEL = {ap:"AP",apf:"APF",mpu:"MPU",ip:"IP",outro:"OUTRO"};
+const PROC_FIELD = {ap:"ap",apf:"apf",mpu:"mpu",ip:"ip",outro:"outro"};
 
 function decretoCell(p) {
   const t = (p.processoPrincipal||"").toLowerCase();
@@ -112,6 +112,7 @@ function renderTable() {
       {id:"apf",label:"APF",css:"tapf"},
       {id:"mpu",label:"MPU",css:"tmpu"},
       {id:"ip", label:"IP", css:"tip"},
+      {id:"outro",label:"OUTRO",css:"toutro"},
     ];
     const temProcs = procs.some(x=>(p[x.id]||"").trim());
 
@@ -239,11 +240,12 @@ window.openEdit = function(key) {
   document.getElementById("fApf").value           = p.apf||"";
   document.getElementById("fMpu").value           = p.mpu||"";
   document.getElementById("fIp").value            = p.ip||"";
+  document.getElementById("fOutro").value         = p.outro||"";
   document.getElementById("fDecData").value       = p.decretacaoData||"";
   document.getElementById("fDecId").value         = p.decretacaoId||"";
   document.getElementById("fObs").value           = p.observacoes||"";
   const pp = (p.processoPrincipal||"").toLowerCase();
-  ["ap","apf","mpu","ip"].forEach(t => setDecRow(t, pp===t));
+  ["ap","apf","mpu","ip","outro"].forEach(t => setDecRow(t, pp===t));
   renderIndefRows();
   document.getElementById("modal").style.display = "flex";
   setTimeout(()=>document.getElementById("fNome").focus(),50);
@@ -254,10 +256,10 @@ window.closeModal = function() {
 };
 
 function clearForm() {
-  ["fNome","fAp","fApf","fMpu","fIp","fData","fDecData","fDecId","fObs"]
+  ["fNome","fAp","fApf","fMpu","fIp","fOutro","fData","fDecData","fDecId","fObs"]
     .forEach(id=>document.getElementById(id).value="");
   document.getElementById("fCumprimento").value = "SEM";
-  ["ap","apf","mpu","ip"].forEach(t=>setDecRow(t,false));
+  ["ap","apf","mpu","ip","outro"].forEach(t=>setDecRow(t,false));
   renderIndefRows();
 }
 
@@ -271,14 +273,13 @@ function setDecRow(t, active) {
 }
 
 window.selectDec = function(tipo) {
-  ["ap","apf","mpu","ip"].forEach(t => setDecRow(t, t===tipo));
+  ["ap","apf","mpu","ip","outro"].forEach(t => setDecRow(t, t===tipo));
 };
 
 window.saveForm = async function() {
   const nome = document.getElementById("fNome").value.trim();
   if (!nome) { alert("Nome é obrigatório."); return; }
-  const pp = ["ap","apf","mpu","ip"].find(t=>document.getElementById("rad-"+t)?.checked)||"";
-  // coletar indeferimentos do DOM (garantia)
+  const pp = ["ap","apf","mpu","ip","outro"].find(t=>document.getElementById("rad-"+t)?.checked)||"";
   const indefFinal = indeferimentos.filter(x=>x.data||x.id);
   const data = {
     nome,
@@ -288,6 +289,7 @@ window.saveForm = async function() {
     apf:               document.getElementById("fApf").value.trim(),
     mpu:               document.getElementById("fMpu").value.trim(),
     ip:                document.getElementById("fIp").value.trim(),
+    outro:             document.getElementById("fOutro").value.trim(),
     processoPrincipal: pp,
     decretacaoData:    document.getElementById("fDecData").value.trim(),
     decretacaoId:      document.getElementById("fDecId").value.trim(),
@@ -457,6 +459,8 @@ td{padding:.68rem .85rem;vertical-align:top;border-bottom:1px solid var(--border
 .tapf{background:var(--tapf-bg);color:var(--tapf-c);}
 .tmpu{background:var(--tmpu-bg);color:var(--tmpu-c);}
 .tip{background:var(--tip-bg);color:var(--tip-c);}
+.toutro{background:#f1f5f9;color:#475569;}
+.toutro{background:#f1f5f9;color:#475569;}
 .dbadge{background:var(--dec-bg);color:var(--dec-c);border:.5px solid var(--dec-br);font-size:.65rem;font-weight:700;padding:1px 7px;border-radius:3px;font-family:var(--mono);}
 
 .btn-icon{background:none;border:none;cursor:pointer;font-size:.88rem;padding:.2rem .28rem;border-radius:4px;transition:background .12s;}
@@ -654,6 +658,12 @@ td{padding:.68rem .85rem;vertical-align:top;border-bottom:1px solid var(--border
             <span class="ptag tip">IP</span>
             <input type="text" id="fIp" placeholder="Número do IP" onclick="event.stopPropagation()" />
             <span id="pdec-ip"></span>
+          </div>
+          <div class="prow" id="prow-outro" onclick="selectDec('outro')">
+            <input type="radio" id="rad-outro" name="decreto" onclick="event.stopPropagation();selectDec('outro')" />
+            <span class="ptag toutro">OUTRO</span>
+            <input type="text" id="fOutro" placeholder="Descreva o tipo e número do processo" onclick="event.stopPropagation()" />
+            <span id="pdec-outro"></span>
           </div>
         </div>
       </div>
