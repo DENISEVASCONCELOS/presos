@@ -26,6 +26,7 @@ const presosRef = ref(db, "presos");
 
 let allPresos  = [];
 let editingKey = null;
+let indeferimentos = []; // array de {data, id} para o modal
 
 function calcDias(str) {
   if (!str) return null;
@@ -114,7 +115,8 @@ function renderTable() {
     ];
     const temProcs = procs.some(x=>(p[x.id]||"").trim());
 
-    const accRows = procs.map(x => {
+    // processos accordion
+    const accProcs = procs.map(x => {
       const isDec = pp===x.id;
       const num   = p[x.id]||"";
       return `<div class="acc-proc-row${isDec?" acc-sel":""}">
@@ -124,13 +126,48 @@ function renderTable() {
       </div>`;
     }).join("");
 
+    // decisão de decretação
+    const decData = p.decretacaoData ? `<span class="acc-info-label">Data:</span> ${esc(p.decretacaoData)}` : "";
+    const decId   = p.decretacaoId   ? `<span class="acc-info-label">ID:</span> ${esc(p.decretacaoId)}` : "";
+    const decBlock = (decData||decId) ? `
+      <div class="acc-section">
+        <div class="acc-section-title">Decisão de Decretação / Conversão</div>
+        <div class="acc-info-row">${decData}${decData&&decId?' &nbsp;|&nbsp; ':''}${decId}</div>
+      </div>` : "";
+
+    // decisões de indeferimento
+    const indefs = Array.isArray(p.indeferimentos) ? p.indeferimentos : [];
+    const indefBlock = indefs.length ? `
+      <div class="acc-section">
+        <div class="acc-section-title">Indeferimento(s) de Revogação</div>
+        ${indefs.map((x,i)=>`
+          <div class="acc-info-row">
+            <span class="acc-info-num">${i+1}.</span>
+            ${x.data?`<span class="acc-info-label">Data:</span> ${esc(x.data)}`:''}
+            ${x.data&&x.id?' &nbsp;|&nbsp; ':''}
+            ${x.id?`<span class="acc-info-label">ID:</span> ${esc(x.id)}`:''}
+          </div>`).join("")}
+      </div>` : "";
+
+    // observações no accordion (completas)
+    const obsBlock = p.observacoes ? `
+      <div class="acc-section">
+        <div class="acc-section-title">Observações</div>
+        <div class="acc-obs">${esc(p.observacoes)}</div>
+      </div>` : "";
+
+    // obs truncada na tabela
+    const obsTrunc = p.observacoes
+      ? `<span class="obs-trunc">${esc(p.observacoes)}</span>`
+      : "—";
+
     return `<tr class="row-main${i%2===1?" row-alt":""}" onclick="toggleAcc('${p._key}')">
       <td style="text-align:center"><span class="badge badge-${(p.cumprimento||"SEM").toLowerCase()}">${p.cumprimento||"SEM"}</span></td>
-      <td class="nome-cell"><i class="chev" id="chev-${p._key}">›</i>${esc(p.nome||"")}${temProcs?'<div class="hint-click">clique para ver processos</div>':""}</td>
-      <td>${decretoCell(p)}</td>
+      <td class="nome-cell"><i class="chev" id="chev-${p._key}">›</i>${esc(p.nome||"")}${temProcs?'<div class="hint-click">clique para expandir</div>':""}</td>
+      <td class="decreto-cell">${decretoCell(p)}</td>
       <td class="${dataRed?"data-red":"data-normal"}">${esc(p.dataPrisao||"—")}</td>
       <td class="dur-cell">${diasStr}</td>
-      <td class="obs-cell">${esc(p.observacoes||"")}</td>
+      <td class="obs-cell">${obsTrunc}</td>
       <td class="acoes-cell">
         <button class="btn-icon" onclick="event.stopPropagation();openEdit('${p._key}')">✏️</button>
         <button class="btn-icon" onclick="event.stopPropagation();confirmDelete('${p._key}','${esc(p.nome||"")}')">🗑️</button>
@@ -140,7 +177,10 @@ function renderTable() {
       <td colspan="7" class="acc-td">
         <div class="acc-inner">
           <div class="acc-title">Processos correlacionados</div>
-          ${accRows}
+          ${accProcs}
+          ${decBlock}
+          ${indefBlock}
+          ${obsBlock}
         </div>
       </td>
     </tr>`;
@@ -152,8 +192,34 @@ window.toggleAcc = function(key) {
   document.getElementById("chev-"+key).classList.toggle("chev-open");
 };
 
+// ── Indeferimentos dinâmicos ─────────────────────────────────────────────────
+window.addIndefRow = function() {
+  indeferimentos.push({data:"", id:""});
+  renderIndefRows();
+};
+
+window.removeIndefRow = function(idx) {
+  indeferimentos.splice(idx, 1);
+  renderIndefRows();
+};
+
+function renderIndefRows() {
+  const wrap = document.getElementById("indefWrap");
+  if (!wrap) return;
+  wrap.innerHTML = indeferimentos.map((x, i) => `
+    <div class="indef-row">
+      <input type="text" class="indef-data" placeholder="DD/MM/AAAA" value="${esc(x.data)}"
+        oninput="indeferimentos[${i}].data=this.value" />
+      <input type="text" class="indef-id" placeholder="ID da decisão" value="${esc(x.id)}"
+        oninput="indeferimentos[${i}].id=this.value" />
+      <button class="indef-rm" onclick="removeIndefRow(${i})" title="Remover">✕</button>
+    </div>`).join("");
+}
+
+// ── Modal ────────────────────────────────────────────────────────────────────
 window.openNew = function() {
   editingKey = null;
+  indeferimentos = [];
   document.getElementById("modalTitle").textContent = "Novo preso";
   clearForm();
   document.getElementById("modal").style.display = "flex";
@@ -164,17 +230,21 @@ window.openEdit = function(key) {
   const p = allPresos.find(x=>x._key===key);
   if (!p) return;
   editingKey = key;
+  indeferimentos = Array.isArray(p.indeferimentos) ? p.indeferimentos.map(x=>({...x})) : [];
   document.getElementById("modalTitle").textContent = "Editar preso";
-  document.getElementById("fNome").value        = p.nome||"";
-  document.getElementById("fCumprimento").value = p.cumprimento||"SEM";
-  document.getElementById("fData").value        = p.dataPrisao||"";
-  document.getElementById("fAp").value          = p.ap||"";
-  document.getElementById("fApf").value         = p.apf||"";
-  document.getElementById("fMpu").value         = p.mpu||"";
-  document.getElementById("fIp").value          = p.ip||"";
-  document.getElementById("fObs").value         = p.observacoes||"";
+  document.getElementById("fNome").value          = p.nome||"";
+  document.getElementById("fCumprimento").value   = p.cumprimento||"SEM";
+  document.getElementById("fData").value          = p.dataPrisao||"";
+  document.getElementById("fAp").value            = p.ap||"";
+  document.getElementById("fApf").value           = p.apf||"";
+  document.getElementById("fMpu").value           = p.mpu||"";
+  document.getElementById("fIp").value            = p.ip||"";
+  document.getElementById("fDecData").value       = p.decretacaoData||"";
+  document.getElementById("fDecId").value         = p.decretacaoId||"";
+  document.getElementById("fObs").value           = p.observacoes||"";
   const pp = (p.processoPrincipal||"").toLowerCase();
   ["ap","apf","mpu","ip"].forEach(t => setDecRow(t, pp===t));
+  renderIndefRows();
   document.getElementById("modal").style.display = "flex";
   setTimeout(()=>document.getElementById("fNome").focus(),50);
 };
@@ -184,9 +254,11 @@ window.closeModal = function() {
 };
 
 function clearForm() {
-  ["fNome","fAp","fApf","fMpu","fIp","fData","fObs"].forEach(id=>document.getElementById(id).value="");
+  ["fNome","fAp","fApf","fMpu","fIp","fData","fDecData","fDecId","fObs"]
+    .forEach(id=>document.getElementById(id).value="");
   document.getElementById("fCumprimento").value = "SEM";
   ["ap","apf","mpu","ip"].forEach(t=>setDecRow(t,false));
+  renderIndefRows();
 }
 
 function setDecRow(t, active) {
@@ -206,6 +278,8 @@ window.saveForm = async function() {
   const nome = document.getElementById("fNome").value.trim();
   if (!nome) { alert("Nome é obrigatório."); return; }
   const pp = ["ap","apf","mpu","ip"].find(t=>document.getElementById("rad-"+t)?.checked)||"";
+  // coletar indeferimentos do DOM (garantia)
+  const indefFinal = indeferimentos.filter(x=>x.data||x.id);
   const data = {
     nome,
     cumprimento:       document.getElementById("fCumprimento").value,
@@ -215,6 +289,9 @@ window.saveForm = async function() {
     mpu:               document.getElementById("fMpu").value.trim(),
     ip:                document.getElementById("fIp").value.trim(),
     processoPrincipal: pp,
+    decretacaoData:    document.getElementById("fDecData").value.trim(),
+    decretacaoId:      document.getElementById("fDecId").value.trim(),
+    indeferimentos:    indefFinal.length ? indefFinal : [],
     observacoes:       document.getElementById("fObs").value.trim(),
     updatedAt:         serverTimestamp()
   };
@@ -230,15 +307,23 @@ window.saveForm = async function() {
 };
 
 window.confirmDelete = function(key, nome) {
-  if (confirm(`Excluir o registro de "${nome}"?`))
+  document.getElementById("delNome").textContent = nome;
+  document.getElementById("delModal").style.display = "flex";
+  document.getElementById("delConfirmBtn").onclick = async () => {
+    document.getElementById("delModal").style.display = "none";
     remove(ref(db,`presos/${key}`)).catch(e=>alert("Erro: "+e.message));
+  };
+};
+window.closeDelModal = function() {
+  document.getElementById("delModal").style.display = "none";
 };
 
 window.exportCSV = function() {
-  const cols = ["Nome","Cumprimento","Processo Decreto","AP","APF","MPU","IP","Data Prisão","Duração (dias)","Observações"];
+  const cols = ["Nome","Cumprimento","Processo Decreto","AP","APF","MPU","IP","Data Prisão","Duração (dias)","Data Decretação","ID Decretação","Indeferimentos","Observações"];
   const rows = allPresos.map(p => {
     const dias = calcDias(p.dataPrisao);
-    return [p.nome,p.cumprimento,p.processoPrincipal,p.ap,p.apf,p.mpu,p.ip,p.dataPrisao,dias??"",p.observacoes]
+    const indefs = (p.indeferimentos||[]).map(x=>`${x.data||''} ID:${x.id||''}`).join('; ');
+    return [p.nome,p.cumprimento,p.processoPrincipal,p.ap,p.apf,p.mpu,p.ip,p.dataPrisao,dias??"",p.decretacaoData,p.decretacaoId,indefs,p.observacoes]
       .map(v=>`"${String(v||"").replace(/"/g,'""')}"`);
   });
   const csv = [cols.map(c=>`"${c}"`).join(","),...rows.map(r=>r.join(","))].join("\n");
@@ -331,25 +416,35 @@ tbody tr.row-main:hover{background:#f1f5f9 !important;}
 tbody tr.row-alt{background:var(--row-alt);}
 td{padding:.68rem .85rem;vertical-align:top;border-bottom:1px solid var(--border);}
 
-.nome-cell{font-weight:600;text-transform:uppercase;font-size:.77rem;line-height:1.4;min-width:150px;}
+.nome-cell{font-weight:600;text-transform:uppercase;font-size:.77rem;line-height:1.4;min-width:150px;max-width:200px;}
+.decreto-cell{min-width:140px;max-width:180px;}
 .hint-click{font-size:.63rem;color:var(--muted);font-weight:400;margin-top:2px;text-transform:none;}
-.data-red{font-family:var(--mono);font-size:.74rem;color:var(--red);font-weight:500;}
-.data-normal{font-family:var(--mono);font-size:.74rem;color:var(--text2);}
-.dur-cell{font-family:var(--mono);font-size:.74rem;color:var(--text2);}
-.obs-cell{font-size:.74rem;color:var(--text2);line-height:1.45;max-width:280px;}
+.data-red{font-family:var(--mono);font-size:.74rem;color:var(--red);font-weight:500;white-space:nowrap;}
+.data-normal{font-family:var(--mono);font-size:.74rem;color:var(--text2);white-space:nowrap;}
+.dur-cell{font-family:var(--mono);font-size:.74rem;color:var(--text2);white-space:nowrap;}
+.obs-cell{font-size:.74rem;color:var(--text2);line-height:1.45;max-width:260px;}
+.obs-trunc{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;}
 .acoes-cell{white-space:nowrap;text-align:center;}
 .empty-row{text-align:center;padding:2.5rem;color:var(--muted);}
-.proc-num{font-family:var(--mono);font-size:.7rem;color:var(--text);margin-top:3px;display:block;}
+.proc-num{font-family:var(--mono);font-size:.7rem;color:var(--text);margin-top:3px;display:block;word-break:break-all;}
 
+/* accordion */
 .acc-row{display:none;}
 .acc-row.acc-open{display:table-row;}
 .acc-td{padding:0 !important;border-bottom:1px solid var(--border) !important;}
-.acc-inner{background:#f8f5ff;border-left:3px solid var(--primary);padding:.55rem .9rem .55rem 1.1rem;}
-.acc-title{font-size:.63rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:.38rem;}
+.acc-inner{background:#f8f5ff;border-left:3px solid var(--primary);padding:.6rem 1rem .6rem 1.1rem;display:flex;flex-direction:column;gap:.55rem;}
+.acc-title{font-size:.63rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;}
 .acc-proc-row{display:flex;align-items:center;gap:8px;padding:3px 5px;border-radius:var(--radius-sm);border:.5px solid transparent;}
 .acc-proc-row.acc-sel{background:#fff;border-color:var(--primary);}
-.acc-num{font-family:var(--mono);font-size:.7rem;color:var(--text);flex:1;}
+.acc-num{font-family:var(--mono);font-size:.7rem;color:var(--text);flex:1;word-break:break-all;}
 .acc-empty{color:var(--muted);font-style:italic;font-size:.68rem;}
+.acc-section{background:#fff;border-radius:var(--radius-sm);border:.5px solid var(--border);padding:.45rem .65rem;}
+.acc-section-title{font-size:.62rem;font-weight:700;color:var(--primary);text-transform:uppercase;letter-spacing:.06em;margin-bottom:.3rem;}
+.acc-info-row{font-size:.72rem;color:var(--text2);font-family:var(--mono);margin-bottom:.2rem;}
+.acc-info-row:last-child{margin-bottom:0;}
+.acc-info-label{font-weight:600;color:var(--text);font-family:var(--sans);}
+.acc-info-num{color:var(--muted);margin-right:.3rem;}
+.acc-obs{font-size:.73rem;color:var(--text2);line-height:1.55;white-space:pre-wrap;}
 
 .chev{display:inline-block;transition:transform .2s;font-style:normal;font-size:.82rem;margin-right:4px;color:var(--muted);}
 .chev-open{transform:rotate(90deg);}
@@ -371,8 +466,9 @@ td{padding:.68rem .85rem;vertical-align:top;border-bottom:1px solid var(--border
 .sync-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:#16a34a;margin-right:.3rem;animation:pulse 2s infinite;}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
 
+/* modal */
 #modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:999;align-items:center;justify-content:center;padding:1rem;}
-.modal-box{background:var(--surface);border-radius:var(--radius);box-shadow:0 10px 40px rgba(0,0,0,.18);width:100%;max-width:540px;max-height:92vh;overflow-y:auto;animation:slideUp .2s ease;}
+.modal-box{background:var(--surface);border-radius:var(--radius);box-shadow:0 10px 40px rgba(0,0,0,.18);width:100%;max-width:560px;max-height:92vh;overflow-y:auto;animation:slideUp .2s ease;}
 @keyframes slideUp{from{transform:translateY(14px);opacity:0}to{transform:translateY(0);opacity:1}}
 .modal-header{padding:.9rem 1.2rem;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;}
 .modal-header h2{font-size:.95rem;font-weight:700;}
@@ -384,7 +480,7 @@ td{padding:.68rem .85rem;vertical-align:top;border-bottom:1px solid var(--border
 .field-group label{font-size:.7rem;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.04em;}
 .field-group input,.field-group select,.field-group textarea{padding:.45rem .62rem;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-family:var(--sans);font-size:.82rem;color:var(--text);outline:none;transition:border-color .15s;background:#fff;}
 .field-group input:focus,.field-group select:focus,.field-group textarea:focus{border-color:var(--primary);}
-.field-group textarea{resize:vertical;min-height:78px;}
+.field-group textarea{resize:vertical;min-height:90px;}
 .row-2{display:grid;grid-template-columns:1fr 1fr;gap:.7rem;}
 .prow-hint{font-size:.67rem;color:var(--muted);margin-bottom:.42rem;}
 .proc-rows{display:flex;flex-direction:column;gap:.36rem;}
@@ -395,14 +491,45 @@ td{padding:.68rem .85rem;vertical-align:top;border-bottom:1px solid var(--border
 .prow .ptag{flex-shrink:0;width:36px;text-align:center;}
 .prow input[type=text]{flex:1;border:none;background:transparent;outline:none;font-family:var(--mono);font-size:.75rem;color:var(--text);padding:0;}
 .prow input[type=text]::placeholder{color:var(--muted);font-style:italic;}
+
+/* indeferimentos */
+.indef-row{display:grid;grid-template-columns:1fr 1fr auto;gap:.4rem;align-items:center;margin-bottom:.35rem;}
+.indef-data,.indef-id{padding:.4rem .55rem;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-family:var(--mono);font-size:.76rem;color:var(--text);outline:none;}
+.indef-data:focus,.indef-id:focus{border-color:var(--primary);}
+.indef-rm{background:none;border:none;cursor:pointer;color:var(--muted);font-size:.8rem;padding:.2rem .35rem;border-radius:4px;}
+.indef-rm:hover{background:#fee2e2;color:var(--red);}
+.btn-add-indef{background:none;border:1.5px dashed var(--border);color:var(--primary);font-family:var(--sans);font-size:.74rem;font-weight:600;padding:.38rem .75rem;border-radius:var(--radius-sm);cursor:pointer;width:100%;text-align:center;margin-top:.2rem;}
+.btn-add-indef:hover{background:#f5f3ff;border-color:var(--primary);}
+.indef-header{display:grid;grid-template-columns:1fr 1fr auto;gap:.4rem;margin-bottom:.2rem;}
+.indef-header span{font-size:.65rem;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.04em;}
+
 .modal-footer{padding:.78rem 1.2rem;border-top:1px solid var(--border);display:flex;gap:.45rem;justify-content:flex-end;}
 .btn-cancel{background:var(--bg);color:var(--text2);border:1.5px solid var(--border);}
 .btn-save{background:var(--primary);color:#fff;border-color:var(--primary);}
 .btn-save:hover{background:var(--primary-h);opacity:1;}
 
+/* modal exclusão */
+#delModal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1000;align-items:center;justify-content:center;padding:1rem;}
+.del-box{background:var(--surface);border-radius:var(--radius);box-shadow:0 10px 40px rgba(0,0,0,.18);width:100%;max-width:380px;overflow:hidden;animation:slideUp .2s ease;}
+.del-header{background:#dc2626;padding:.85rem 1.2rem;display:flex;align-items:center;justify-content:space-between;}
+.del-header span{color:#fff;font-weight:700;font-size:.95rem;}
+.del-close{background:none;border:none;color:#fff;font-size:1.1rem;cursor:pointer;opacity:.85;padding:.1rem .3rem;border-radius:4px;}
+.del-close:hover{opacity:1;}
+.del-body{padding:1.5rem 1.2rem;text-align:center;display:flex;flex-direction:column;align-items:center;gap:.65rem;}
+.del-icon{font-size:2.8rem;line-height:1;}
+.del-body h3{font-size:1rem;font-weight:700;color:var(--text);}
+.del-nome{color:#dc2626;font-weight:700;text-transform:uppercase;font-size:.85rem;}
+.del-aviso{font-size:.75rem;color:var(--muted);}
+.del-footer{padding:.85rem 1.2rem;border-top:1px solid var(--border);display:flex;gap:.6rem;justify-content:center;}
+.btn-del-cancel{background:var(--bg);color:var(--text2);border:1.5px solid var(--border);padding:.45rem 1.2rem;border-radius:var(--radius-sm);cursor:pointer;font-family:var(--sans);font-size:.82rem;font-weight:600;}
+.btn-del-cancel:hover{background:var(--border);}
+.btn-del-confirm{background:#dc2626;color:#fff;border:none;padding:.45rem 1.2rem;border-radius:var(--radius-sm);cursor:pointer;font-family:var(--sans);font-size:.82rem;font-weight:600;}
+.btn-del-confirm:hover{background:#b91c1c;}
+
 @media(max-width:768px){
   .app-header,.toolbar,.filters-bar,.table-wrap,.app-footer{padding-left:.9rem;padding-right:.9rem;}
-  .row-2{grid-template-columns:1fr;}
+  .row-2,.indef-row,.indef-header{grid-template-columns:1fr;}
+  .indef-rm{justify-self:end;}
 }
 </style>
 </head>
@@ -475,6 +602,7 @@ td{padding:.68rem .85rem;vertical-align:top;border-bottom:1px solid var(--border
     </div>
     <div class="modal-body">
 
+      <!-- Dados -->
       <div>
         <div class="sec-label">Dados do custodiado</div>
         <div style="display:flex;flex-direction:column;gap:.58rem;">
@@ -498,6 +626,7 @@ td{padding:.68rem .85rem;vertical-align:top;border-bottom:1px solid var(--border
         </div>
       </div>
 
+      <!-- Processos -->
       <div>
         <div class="sec-label">Processos</div>
         <div class="prow-hint">Preencha os processos e marque onde a prisão foi decretada</div>
@@ -529,6 +658,34 @@ td{padding:.68rem .85rem;vertical-align:top;border-bottom:1px solid var(--border
         </div>
       </div>
 
+      <!-- Decisão de decretação -->
+      <div>
+        <div class="sec-label">Decisão de Decretação / Conversão</div>
+        <div class="row-2">
+          <div class="field-group">
+            <label>Data da decisão</label>
+            <input id="fDecData" type="text" placeholder="DD/MM/AAAA" />
+          </div>
+          <div class="field-group">
+            <label>ID da decisão</label>
+            <input id="fDecId" type="text" placeholder="Ex: 529669237" />
+          </div>
+        </div>
+      </div>
+
+      <!-- Indeferimentos -->
+      <div>
+        <div class="sec-label">Indeferimento(s) de Revogação</div>
+        <div class="indef-header">
+          <span>Data da decisão</span>
+          <span>ID da decisão</span>
+          <span></span>
+        </div>
+        <div id="indefWrap"></div>
+        <button class="btn-add-indef" onclick="addIndefRow()">+ Adicionar indeferimento</button>
+      </div>
+
+      <!-- Observações -->
       <div>
         <div class="sec-label">Observações</div>
         <div class="field-group">
@@ -540,6 +697,26 @@ td{padding:.68rem .85rem;vertical-align:top;border-bottom:1px solid var(--border
     <div class="modal-footer">
       <button class="btn btn-cancel" onclick="closeModal()">Cancelar</button>
       <button class="btn btn-save"   onclick="saveForm()">💾 Salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal exclusão -->
+<div id="delModal">
+  <div class="del-box">
+    <div class="del-header">
+      <span>Confirmar Exclusão</span>
+      <button class="del-close" onclick="closeDelModal()">✕</button>
+    </div>
+    <div class="del-body">
+      <div class="del-icon">🗑️</div>
+      <h3>Tem certeza?</h3>
+      <p>Você está prestes a excluir o registro de<br><span id="delNome" class="del-nome"></span></p>
+      <p class="del-aviso">Esta ação não pode ser desfeita.</p>
+    </div>
+    <div class="del-footer">
+      <button class="btn-del-cancel" onclick="closeDelModal()">Cancelar</button>
+      <button class="btn-del-confirm" id="delConfirmBtn">Excluir</button>
     </div>
   </div>
 </div>
