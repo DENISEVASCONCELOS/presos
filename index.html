@@ -26,7 +26,7 @@ const presosRef = ref(db, "presos");
 
 let allPresos  = [];
 let editingKey = null;
-let indeferimentos = []; // array de {data, id} para o modal
+let indeferimentos = [];
 
 function calcDias(str) {
   if (!str) return null;
@@ -97,7 +97,7 @@ function renderTable() {
 
   const tbody = document.getElementById("tbody");
   if (!lista.length) {
-    tbody.innerHTML = `<tr><td colspan="7" class="empty-row">Nenhum registro encontrado.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" class="empty-row">Nenhum registro encontrado.</td></tr>`;
     return;
   }
 
@@ -108,15 +108,14 @@ function renderTable() {
     const pp      = (p.processoPrincipal||"").toLowerCase();
 
     const procs = [
-      {id:"ap", label:"AP", css:"tap"},
-      {id:"apf",label:"APF",css:"tapf"},
-      {id:"mpu",label:"MPU",css:"tmpu"},
-      {id:"ip", label:"IP", css:"tip"},
-      {id:"outro",label:"OUTRO",css:"toutro"},
+      {id:"ap",    label:"AP",    css:"tap"},
+      {id:"apf",   label:"APF",   css:"tapf"},
+      {id:"mpu",   label:"MPU",   css:"tmpu"},
+      {id:"ip",    label:"IP",    css:"tip"},
+      {id:"outro", label:"OUTRO", css:"toutro"},
     ];
     const temProcs = procs.some(x=>(p[x.id]||"").trim());
 
-    // processos accordion
     const accProcs = procs.map(x => {
       const isDec = pp===x.id;
       const num   = p[x.id]||"";
@@ -127,7 +126,6 @@ function renderTable() {
       </div>`;
     }).join("");
 
-    // decisão de decretação
     const decData = p.decretacaoData ? `<span class="acc-info-label">Data:</span> ${esc(p.decretacaoData)}` : "";
     const decId   = p.decretacaoId   ? `<span class="acc-info-label">ID:</span> ${esc(p.decretacaoId)}` : "";
     const decBlock = (decData||decId) ? `
@@ -136,7 +134,6 @@ function renderTable() {
         <div class="acc-info-row">${decData}${decData&&decId?' &nbsp;|&nbsp; ':''}${decId}</div>
       </div>` : "";
 
-    // decisões de indeferimento
     const indefs = Array.isArray(p.indeferimentos) ? p.indeferimentos : [];
     const indefBlock = indefs.length ? `
       <div class="acc-section">
@@ -150,17 +147,19 @@ function renderTable() {
           </div>`).join("")}
       </div>` : "";
 
-    // observações no accordion (completas)
     const obsBlock = p.observacoes ? `
       <div class="acc-section">
         <div class="acc-section-title">Observações</div>
         <div class="acc-obs">${esc(p.observacoes)}</div>
       </div>` : "";
 
-    // obs truncada na tabela
     const obsTrunc = p.observacoes
       ? `<span class="obs-trunc">${esc(p.observacoes)}</span>`
       : "—";
+
+    // reavaliação na tabela
+    const reavStr = p.reavaliacao || "—";
+    const reavAlert = p.reavaliacao ? calcDias(p.reavaliacao) !== null && calcDias(p.reavaliacao) <= 7 : false;
 
     return `<tr class="row-main${i%2===1?" row-alt":""}" onclick="toggleAcc('${p._key}')">
       <td style="text-align:center"><span class="badge badge-${(p.cumprimento||"SEM").toLowerCase()}">${p.cumprimento||"SEM"}</span></td>
@@ -168,6 +167,7 @@ function renderTable() {
       <td class="decreto-cell">${decretoCell(p)}</td>
       <td class="${dataRed?"data-red":"data-normal"}">${esc(p.dataPrisao||"—")}</td>
       <td class="dur-cell">${diasStr}</td>
+      <td class="reav-cell${reavAlert?" reav-alert":""}">${esc(reavStr)}</td>
       <td class="obs-cell">${obsTrunc}</td>
       <td class="acoes-cell">
         <button class="btn-icon" onclick="event.stopPropagation();openEdit('${p._key}')">✏️</button>
@@ -175,7 +175,7 @@ function renderTable() {
       </td>
     </tr>
     <tr class="acc-row" id="acc-${p._key}">
-      <td colspan="7" class="acc-td">
+      <td colspan="8" class="acc-td">
         <div class="acc-inner">
           <div class="acc-title">Processos correlacionados</div>
           ${accProcs}
@@ -193,7 +193,6 @@ window.toggleAcc = function(key) {
   document.getElementById("chev-"+key).classList.toggle("chev-open");
 };
 
-// ── Indeferimentos dinâmicos ─────────────────────────────────────────────────
 window.addIndefRow = function() {
   indeferimentos.push({data:"", id:""});
   renderIndefRows();
@@ -217,7 +216,6 @@ function renderIndefRows() {
     </div>`).join("");
 }
 
-// ── Modal ────────────────────────────────────────────────────────────────────
 window.openNew = function() {
   editingKey = null;
   indeferimentos = [];
@@ -243,6 +241,7 @@ window.openEdit = function(key) {
   document.getElementById("fOutro").value         = p.outro||"";
   document.getElementById("fDecData").value       = p.decretacaoData||"";
   document.getElementById("fDecId").value         = p.decretacaoId||"";
+  document.getElementById("fReavaliacao").value   = p.reavaliacao||"";
   document.getElementById("fObs").value           = p.observacoes||"";
   const pp = (p.processoPrincipal||"").toLowerCase();
   ["ap","apf","mpu","ip","outro"].forEach(t => setDecRow(t, pp===t));
@@ -256,7 +255,7 @@ window.closeModal = function() {
 };
 
 function clearForm() {
-  ["fNome","fAp","fApf","fMpu","fIp","fOutro","fData","fDecData","fDecId","fObs"]
+  ["fNome","fAp","fApf","fMpu","fIp","fOutro","fData","fDecData","fDecId","fReavaliacao","fObs"]
     .forEach(id=>document.getElementById(id).value="");
   document.getElementById("fCumprimento").value = "SEM";
   ["ap","apf","mpu","ip","outro"].forEach(t=>setDecRow(t,false));
@@ -294,6 +293,7 @@ window.saveForm = async function() {
     decretacaoData:    document.getElementById("fDecData").value.trim(),
     decretacaoId:      document.getElementById("fDecId").value.trim(),
     indeferimentos:    indefFinal.length ? indefFinal : [],
+    reavaliacao:       document.getElementById("fReavaliacao").value.trim(),
     observacoes:       document.getElementById("fObs").value.trim(),
     updatedAt:         serverTimestamp()
   };
@@ -321,11 +321,11 @@ window.closeDelModal = function() {
 };
 
 window.exportCSV = function() {
-  const cols = ["Nome","Cumprimento","Processo Decreto","AP","APF","MPU","IP","Data Prisão","Duração (dias)","Data Decretação","ID Decretação","Indeferimentos","Observações"];
+  const cols = ["Nome","Cumprimento","Processo Decreto","AP","APF","MPU","IP","Data Prisão","Duração (dias)","Reavaliação","Data Decretação","ID Decretação","Indeferimentos","Observações"];
   const rows = allPresos.map(p => {
     const dias = calcDias(p.dataPrisao);
     const indefs = (p.indeferimentos||[]).map(x=>`${x.data||''} ID:${x.id||''}`).join('; ');
-    return [p.nome,p.cumprimento,p.processoPrincipal,p.ap,p.apf,p.mpu,p.ip,p.dataPrisao,dias??"",p.decretacaoData,p.decretacaoId,indefs,p.observacoes]
+    return [p.nome,p.cumprimento,p.processoPrincipal,p.ap,p.apf,p.mpu,p.ip,p.dataPrisao,dias??"",p.reavaliacao,p.decretacaoData,p.decretacaoId,indefs,p.observacoes]
       .map(v=>`"${String(v||"").replace(/"/g,'""')}"`);
   });
   const csv = [cols.map(c=>`"${c}"`).join(","),...rows.map(r=>r.join(","))].join("\n");
@@ -412,25 +412,26 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:1
 .table-wrap{padding:.9rem 1.5rem;overflow-x:auto;}
 table{width:100%;border-collapse:collapse;background:var(--surface);border-radius:var(--radius);overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.07);font-size:.79rem;}
 thead tr{background:#f8fafc;border-bottom:2px solid var(--border);}
-th{padding:.55rem .85rem;text-align:left;font-weight:600;color:var(--text2);font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap;}
+th{padding:.55rem .75rem;text-align:left;font-weight:600;color:var(--text2);font-size:.7rem;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap;}
 tbody tr.row-main{cursor:pointer;transition:background .12s;}
 tbody tr.row-main:hover{background:#f1f5f9 !important;}
 tbody tr.row-alt{background:var(--row-alt);}
-td{padding:.68rem .85rem;vertical-align:top;border-bottom:1px solid var(--border);}
+td{padding:.68rem .75rem;vertical-align:top;border-bottom:1px solid var(--border);}
 
-.nome-cell{font-weight:600;text-transform:uppercase;font-size:.77rem;line-height:1.4;min-width:150px;max-width:200px;}
-.decreto-cell{min-width:140px;max-width:180px;}
+.nome-cell{font-weight:600;text-transform:uppercase;font-size:.77rem;line-height:1.4;min-width:140px;max-width:180px;}
+.decreto-cell{min-width:130px;max-width:170px;}
 .hint-click{font-size:.63rem;color:var(--muted);font-weight:400;margin-top:2px;text-transform:none;}
 .data-red{font-family:var(--mono);font-size:.74rem;color:var(--red);font-weight:500;white-space:nowrap;}
 .data-normal{font-family:var(--mono);font-size:.74rem;color:var(--text2);white-space:nowrap;}
 .dur-cell{font-family:var(--mono);font-size:.74rem;color:var(--text2);white-space:nowrap;}
-.obs-cell{font-size:.74rem;color:var(--text2);line-height:1.45;max-width:260px;}
+.reav-cell{font-family:var(--mono);font-size:.74rem;color:var(--text2);white-space:nowrap;min-width:90px;}
+.reav-alert{color:#b45309;font-weight:600;}
+.obs-cell{font-size:.74rem;color:var(--text2);line-height:1.45;max-width:280px;}
 .obs-trunc{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;}
 .acoes-cell{white-space:nowrap;text-align:center;}
 .empty-row{text-align:center;padding:2.5rem;color:var(--muted);}
 .proc-num{font-family:var(--mono);font-size:.7rem;color:var(--text);margin-top:3px;display:block;word-break:break-all;}
 
-/* accordion */
 .acc-row{display:none;}
 .acc-row.acc-open{display:table-row;}
 .acc-td{padding:0 !important;border-bottom:1px solid var(--border) !important;}
@@ -460,7 +461,6 @@ td{padding:.68rem .85rem;vertical-align:top;border-bottom:1px solid var(--border
 .tmpu{background:var(--tmpu-bg);color:var(--tmpu-c);}
 .tip{background:var(--tip-bg);color:var(--tip-c);}
 .toutro{background:#f1f5f9;color:#475569;}
-.toutro{background:#f1f5f9;color:#475569;}
 .dbadge{background:var(--dec-bg);color:var(--dec-c);border:.5px solid var(--dec-br);font-size:.65rem;font-weight:700;padding:1px 7px;border-radius:3px;font-family:var(--mono);}
 
 .btn-icon{background:none;border:none;cursor:pointer;font-size:.88rem;padding:.2rem .28rem;border-radius:4px;transition:background .12s;}
@@ -470,7 +470,6 @@ td{padding:.68rem .85rem;vertical-align:top;border-bottom:1px solid var(--border
 .sync-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:#16a34a;margin-right:.3rem;animation:pulse 2s infinite;}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
 
-/* modal */
 #modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:999;align-items:center;justify-content:center;padding:1rem;}
 .modal-box{background:var(--surface);border-radius:var(--radius);box-shadow:0 10px 40px rgba(0,0,0,.18);width:100%;max-width:560px;max-height:92vh;overflow-y:auto;animation:slideUp .2s ease;}
 @keyframes slideUp{from{transform:translateY(14px);opacity:0}to{transform:translateY(0);opacity:1}}
@@ -496,7 +495,6 @@ td{padding:.68rem .85rem;vertical-align:top;border-bottom:1px solid var(--border
 .prow input[type=text]{flex:1;border:none;background:transparent;outline:none;font-family:var(--mono);font-size:.75rem;color:var(--text);padding:0;}
 .prow input[type=text]::placeholder{color:var(--muted);font-style:italic;}
 
-/* indeferimentos */
 .indef-row{display:grid;grid-template-columns:1fr 1fr auto;gap:.4rem;align-items:center;margin-bottom:.35rem;}
 .indef-data,.indef-id{padding:.4rem .55rem;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-family:var(--mono);font-size:.76rem;color:var(--text);outline:none;}
 .indef-data:focus,.indef-id:focus{border-color:var(--primary);}
@@ -512,7 +510,6 @@ td{padding:.68rem .85rem;vertical-align:top;border-bottom:1px solid var(--border
 .btn-save{background:var(--primary);color:#fff;border-color:var(--primary);}
 .btn-save:hover{background:var(--primary-h);opacity:1;}
 
-/* modal exclusão */
 #delModal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1000;align-items:center;justify-content:center;padding:1rem;}
 .del-box{background:var(--surface);border-radius:var(--radius);box-shadow:0 10px 40px rgba(0,0,0,.18);width:100%;max-width:380px;overflow:hidden;animation:slideUp .2s ease;}
 .del-header{background:#dc2626;padding:.85rem 1.2rem;display:flex;align-items:center;justify-content:space-between;}
@@ -583,12 +580,13 @@ td{padding:.68rem .85rem;vertical-align:top;border-bottom:1px solid var(--border
         <th>Processo c/ Decreto</th>
         <th>Data Prisão</th>
         <th>Duração</th>
+        <th>Reavaliação</th>
         <th>Observações</th>
         <th>Ações</th>
       </tr>
     </thead>
     <tbody id="tbody">
-      <tr><td colspan="7" class="empty-row">Conectando ao Firebase…</td></tr>
+      <tr><td colspan="8" class="empty-row">Conectando ao Firebase…</td></tr>
     </tbody>
   </table>
 </div>
@@ -606,7 +604,6 @@ td{padding:.68rem .85rem;vertical-align:top;border-bottom:1px solid var(--border
     </div>
     <div class="modal-body">
 
-      <!-- Dados -->
       <div>
         <div class="sec-label">Dados do custodiado</div>
         <div style="display:flex;flex-direction:column;gap:.58rem;">
@@ -627,10 +624,13 @@ td{padding:.68rem .85rem;vertical-align:top;border-bottom:1px solid var(--border
               <input id="fData" type="text" placeholder="DD/MM/AAAA" />
             </div>
           </div>
+          <div class="field-group">
+            <label>Reavaliação</label>
+            <input id="fReavaliacao" type="text" placeholder="DD/MM/AAAA" style="max-width:180px;" />
+          </div>
         </div>
       </div>
 
-      <!-- Processos -->
       <div>
         <div class="sec-label">Processos</div>
         <div class="prow-hint">Preencha os processos e marque onde a prisão foi decretada</div>
@@ -668,7 +668,6 @@ td{padding:.68rem .85rem;vertical-align:top;border-bottom:1px solid var(--border
         </div>
       </div>
 
-      <!-- Decisão de decretação -->
       <div>
         <div class="sec-label">Decisão de Decretação / Conversão</div>
         <div class="row-2">
@@ -683,7 +682,6 @@ td{padding:.68rem .85rem;vertical-align:top;border-bottom:1px solid var(--border
         </div>
       </div>
 
-      <!-- Indeferimentos -->
       <div>
         <div class="sec-label">Indeferimento(s) de Revogação</div>
         <div class="indef-header">
@@ -695,7 +693,6 @@ td{padding:.68rem .85rem;vertical-align:top;border-bottom:1px solid var(--border
         <button class="btn-add-indef" onclick="addIndefRow()">+ Adicionar indeferimento</button>
       </div>
 
-      <!-- Observações -->
       <div>
         <div class="sec-label">Observações</div>
         <div class="field-group">
@@ -711,7 +708,6 @@ td{padding:.68rem .85rem;vertical-align:top;border-bottom:1px solid var(--border
   </div>
 </div>
 
-<!-- Modal exclusão -->
 <div id="delModal">
   <div class="del-box">
     <div class="del-header">
