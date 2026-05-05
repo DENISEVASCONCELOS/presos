@@ -5,14 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Sistema de Controle de Presos</title>
 
-<!-- Firebase compat (necessário para Auth junto com SDK modular) -->
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
 
 <script>
-// ── Firebase compat init ─────────────────────────────────────────────────────
-const firebaseConfigCompat = {
+firebase.initializeApp({
   apiKey: "AIzaSyCAEhARwMkl2mabrku0BsDHBVGXfq_3bSg",
   authDomain: "monitoramento-eletronico-9dfbd.firebaseapp.com",
   databaseURL: "https://monitoramento-eletronico-9dfbd-default-rtdb.firebaseio.com",
@@ -20,17 +18,23 @@ const firebaseConfigCompat = {
   storageBucket: "monitoramento-eletronico-9dfbd.firebasestorage.app",
   messagingSenderId: "374021798667",
   appId: "1:374021798667:web:59413e5700d2e73264400e"
-};
-firebase.initializeApp(firebaseConfigCompat);
-const auth = firebase.auth();
-const dbCompat = firebase.database();
+});
 
-// ── Auth state ───────────────────────────────────────────────────────────────
+const auth = firebase.auth();
+const db   = firebase.database();
+const presosRef = db.ref("presos");
+
+let allPresos  = [];
+let editingKey = null;
+let indeferimentos = [];
+
+// ── Auth ─────────────────────────────────────────────────────────────────────
 auth.onAuthStateChanged(user => {
   if (user) {
     document.getElementById("loginScreen").style.display = "none";
     document.getElementById("appScreen").style.display  = "block";
     document.getElementById("userEmail").textContent = user.email;
+    startListening();
   } else {
     document.getElementById("loginScreen").style.display = "flex";
     document.getElementById("appScreen").style.display  = "none";
@@ -44,9 +48,7 @@ function doAuth() {
   const pass2 = document.getElementById("authPass2").value;
   const errEl = document.getElementById("authErr");
   errEl.textContent = "";
-
   if (!email || !pass) { errEl.textContent = "Preencha e-mail e senha."; return; }
-
   if (tab === "cadastro") {
     if (pass !== pass2) { errEl.textContent = "As senhas não coincidem."; return; }
     if (pass.length < 6) { errEl.textContent = "A senha deve ter ao menos 6 caracteres."; return; }
@@ -57,53 +59,42 @@ function doAuth() {
       .catch(e => { errEl.textContent = authMsg(e.code); });
   }
 }
-
-function doLogout() {
-  auth.signOut();
-}
-
+function doLogout() { auth.signOut(); }
 function switchTab(tab) {
   document.querySelectorAll(".auth-tab").forEach(b => b.classList.toggle("active", b.dataset.tab===tab));
   document.getElementById("pass2wrap").style.display = tab==="cadastro" ? "block" : "none";
   document.getElementById("authErr").textContent = "";
   document.getElementById("authBtn").textContent = tab==="cadastro" ? "Criar conta" : "Entrar";
 }
-
 function authMsg(code) {
   const msgs = {
-    "auth/user-not-found":      "Usuário não encontrado.",
-    "auth/wrong-password":      "Senha incorreta.",
-    "auth/invalid-email":       "E-mail inválido.",
+    "auth/user-not-found":"Usuário não encontrado.",
+    "auth/wrong-password":"Senha incorreta.",
+    "auth/invalid-email":"E-mail inválido.",
     "auth/email-already-in-use":"Este e-mail já está em uso.",
-    "auth/too-many-requests":   "Muitas tentativas. Tente mais tarde.",
-    "auth/invalid-credential":  "E-mail ou senha incorretos.",
+    "auth/too-many-requests":"Muitas tentativas. Tente mais tarde.",
+    "auth/invalid-credential":"E-mail ou senha incorretos.",
   };
   return msgs[code] || "Erro ao autenticar. Tente novamente.";
 }
 
-// permitir Enter no formulário
-document.addEventListener("DOMContentLoaded", () => {
-  ["authEmail","authPass","authPass2"].forEach(id => {
-    document.getElementById(id)?.addEventListener("keydown", e => {
-      if (e.key === "Enter") doAuth();
-    });
+// ── Firebase listener ─────────────────────────────────────────────────────────
+function startListening() {
+  presosRef.on("value", snap => {
+    allPresos = [];
+    if (snap.exists()) {
+      snap.forEach(c => {
+        const val = c.val();
+        if (val && val.nome) allPresos.push({_key:c.key,...val});
+      });
+    }
+    document.getElementById("lastMod").textContent =
+      "Última modificação em " + fmtDate(Date.now());
+    renderTable();
   });
-});
-</script>
+}
 
-<script type="module">
-import { getApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getDatabase, ref, onValue, push, update, remove, serverTimestamp }
-  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
-
-const app = getApp();
-const db  = getDatabase(app);
-const presosRef = ref(db, "presos");
-
-let allPresos  = [];
-let editingKey = null;
-let indeferimentos = [];
-
+// ── Helpers ───────────────────────────────────────────────────────────────────
 function calcDias(str) {
   if (!str) return null;
   const [d,m,y] = str.split("/").map(Number);
@@ -111,18 +102,14 @@ function calcDias(str) {
   const diff = Math.floor((new Date() - new Date(y,m-1,d)) / 86400000);
   return diff >= 0 ? diff : null;
 }
-
 function fmtDate(ts) {
   if (!ts) return "";
   const d = new Date(ts);
   return d.toLocaleDateString("pt-BR") + ", " +
          d.toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
 }
-
 function esc(s) {
-  return String(s||"")
-    .replace(/&/g,"&amp;").replace(/</g,"&lt;")
-    .replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+  return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 }
 
 const TIPO_CSS   = {ap:"tap",apf:"tapf",mpu:"tmpu",ip:"tip",outro:"toutro"};
@@ -137,19 +124,7 @@ function decretoCell(p) {
        + (num ? `<span class="proc-num">${esc(num)}</span>` : "");
 }
 
-onValue(presosRef, snap => {
-  allPresos = [];
-  if (snap.exists()) {
-    snap.forEach(c => {
-      const val = c.val();
-      if (val && val.nome) allPresos.push({_key:c.key,...val});
-    });
-  }
-  document.getElementById("lastMod").textContent =
-    "Última modificação em " + fmtDate(Date.now());
-  renderTable();
-}, { onlyOnce: false });
-
+// ── Render ────────────────────────────────────────────────────────────────────
 function renderTable() {
   const q      = (document.getElementById("searchInput")?.value||"").toLowerCase();
   const filtro = document.querySelector(".filter-btn.active")?.dataset.filtro||"todos";
@@ -184,11 +159,9 @@ function renderTable() {
     const pp      = (p.processoPrincipal||"").toLowerCase();
 
     const procs = [
-      {id:"ap",    label:"AP",    css:"tap"},
-      {id:"apf",   label:"APF",   css:"tapf"},
-      {id:"mpu",   label:"MPU",   css:"tmpu"},
-      {id:"ip",    label:"IP",    css:"tip"},
-      {id:"outro", label:"OUTRO", css:"toutro"},
+      {id:"ap",label:"AP",css:"tap"},{id:"apf",label:"APF",css:"tapf"},
+      {id:"mpu",label:"MPU",css:"tmpu"},{id:"ip",label:"IP",css:"tip"},
+      {id:"outro",label:"OUTRO",css:"toutro"},
     ];
     const temProcs = procs.some(x=>(p[x.id]||"").trim());
 
@@ -204,37 +177,14 @@ function renderTable() {
 
     const decData = p.decretacaoData ? `<span class="acc-info-label">Data:</span> ${esc(p.decretacaoData)}` : "";
     const decId   = p.decretacaoId   ? `<span class="acc-info-label">ID:</span> ${esc(p.decretacaoId)}` : "";
-    const decBlock = (decData||decId) ? `
-      <div class="acc-section">
-        <div class="acc-section-title">Decisão de Decretação / Conversão</div>
-        <div class="acc-info-row">${decData}${decData&&decId?' &nbsp;|&nbsp; ':''}${decId}</div>
-      </div>` : "";
+    const decBlock = (decData||decId) ? `<div class="acc-section"><div class="acc-section-title">Decisão de Decretação / Conversão</div><div class="acc-info-row">${decData}${decData&&decId?' &nbsp;|&nbsp; ':''}${decId}</div></div>` : "";
 
     const indefs = Array.isArray(p.indeferimentos) ? p.indeferimentos : [];
-    const indefBlock = indefs.length ? `
-      <div class="acc-section">
-        <div class="acc-section-title">Indeferimento(s) de Revogação</div>
-        ${indefs.map((x,i)=>`
-          <div class="acc-info-row">
-            <span class="acc-info-num">${i+1}.</span>
-            ${x.data?`<span class="acc-info-label">Data:</span> ${esc(x.data)}`:''}
-            ${x.data&&x.id?' &nbsp;|&nbsp; ':''}
-            ${x.id?`<span class="acc-info-label">ID:</span> ${esc(x.id)}`:''}
-          </div>`).join("")}
-      </div>` : "";
+    const indefBlock = indefs.length ? `<div class="acc-section"><div class="acc-section-title">Indeferimento(s) de Revogação</div>${indefs.map((x,i)=>`<div class="acc-info-row"><span class="acc-info-num">${i+1}.</span>${x.data?`<span class="acc-info-label">Data:</span> ${esc(x.data)}`:''}${x.data&&x.id?' &nbsp;|&nbsp; ':''}${x.id?`<span class="acc-info-label">ID:</span> ${esc(x.id)}`:''}</div>`).join("")}</div>` : "";
 
-    const obsBlock = p.observacoes ? `
-      <div class="acc-section">
-        <div class="acc-section-title">Observações</div>
-        <div class="acc-obs">${esc(p.observacoes)}</div>
-      </div>` : "";
-
-    const obsTrunc = p.observacoes
-      ? `<span class="obs-trunc">${esc(p.observacoes)}</span>`
-      : "—";
-
-    // reavaliação na tabela
-    const reavStr = p.reavaliacao || "—";
+    const obsBlock = p.observacoes ? `<div class="acc-section"><div class="acc-section-title">Observações</div><div class="acc-obs">${esc(p.observacoes)}</div></div>` : "";
+    const obsTrunc = p.observacoes ? `<span class="obs-trunc">${esc(p.observacoes)}</span>` : "—";
+    const reavStr   = p.reavaliacao || "—";
     const reavAlert = p.reavaliacao ? calcDias(p.reavaliacao) !== null && calcDias(p.reavaliacao) <= 7 : false;
 
     return `<tr class="row-main${i%2===1?" row-alt":""}" onclick="toggleAcc('${p._key}')">
@@ -254,47 +204,36 @@ function renderTable() {
       <td colspan="8" class="acc-td">
         <div class="acc-inner">
           <div class="acc-title">Processos correlacionados</div>
-          ${accProcs}
-          ${decBlock}
-          ${indefBlock}
-          ${obsBlock}
+          ${accProcs}${decBlock}${indefBlock}${obsBlock}
         </div>
       </td>
     </tr>`;
   }).join("");
 }
 
+// ── Accordion ─────────────────────────────────────────────────────────────────
 window.toggleAcc = function(key) {
   document.getElementById("acc-"+key).classList.toggle("acc-open");
   document.getElementById("chev-"+key).classList.toggle("chev-open");
 };
 
-window.addIndefRow = function() {
-  indeferimentos.push({data:"", id:""});
-  renderIndefRows();
-};
-
-window.removeIndefRow = function(idx) {
-  indeferimentos.splice(idx, 1);
-  renderIndefRows();
-};
-
+// ── Indeferimentos ────────────────────────────────────────────────────────────
+window.addIndefRow = function() { indeferimentos.push({data:"",id:""}); renderIndefRows(); };
+window.removeIndefRow = function(idx) { indeferimentos.splice(idx,1); renderIndefRows(); };
 function renderIndefRows() {
   const wrap = document.getElementById("indefWrap");
   if (!wrap) return;
-  wrap.innerHTML = indeferimentos.map((x, i) => `
+  wrap.innerHTML = indeferimentos.map((x,i) => `
     <div class="indef-row">
-      <input type="text" class="indef-data" placeholder="DD/MM/AAAA" value="${esc(x.data)}"
-        oninput="indeferimentos[${i}].data=this.value" />
-      <input type="text" class="indef-id" placeholder="ID da decisão" value="${esc(x.id)}"
-        oninput="indeferimentos[${i}].id=this.value" />
-      <button class="indef-rm" onclick="removeIndefRow(${i})" title="Remover">✕</button>
+      <input type="text" class="indef-data" placeholder="DD/MM/AAAA" value="${esc(x.data)}" oninput="indeferimentos[${i}].data=this.value"/>
+      <input type="text" class="indef-id" placeholder="ID da decisão" value="${esc(x.id)}" oninput="indeferimentos[${i}].id=this.value"/>
+      <button class="indef-rm" onclick="removeIndefRow(${i})">✕</button>
     </div>`).join("");
 }
 
+// ── Modal ─────────────────────────────────────────────────────────────────────
 window.openNew = function() {
-  editingKey = null;
-  indeferimentos = [];
+  editingKey = null; indeferimentos = [];
   document.getElementById("modalTitle").textContent = "Novo preso";
   clearForm();
   document.getElementById("modal").style.display = "flex";
@@ -302,23 +241,22 @@ window.openNew = function() {
 };
 
 window.openEdit = function(key) {
-  const p = allPresos.find(x=>x._key===key);
-  if (!p) return;
+  const p = allPresos.find(x=>x._key===key); if (!p) return;
   editingKey = key;
   indeferimentos = Array.isArray(p.indeferimentos) ? p.indeferimentos.map(x=>({...x})) : [];
   document.getElementById("modalTitle").textContent = "Editar preso";
-  document.getElementById("fNome").value          = p.nome||"";
-  document.getElementById("fCumprimento").value   = p.cumprimento||"SEM";
-  document.getElementById("fData").value          = p.dataPrisao||"";
-  document.getElementById("fAp").value            = p.ap||"";
-  document.getElementById("fApf").value           = p.apf||"";
-  document.getElementById("fMpu").value           = p.mpu||"";
-  document.getElementById("fIp").value            = p.ip||"";
-  document.getElementById("fOutro").value         = p.outro||"";
-  document.getElementById("fDecData").value       = p.decretacaoData||"";
-  document.getElementById("fDecId").value         = p.decretacaoId||"";
-  document.getElementById("fReavaliacao").value   = p.reavaliacao||"";
-  document.getElementById("fObs").value           = p.observacoes||"";
+  document.getElementById("fNome").value        = p.nome||"";
+  document.getElementById("fCumprimento").value = p.cumprimento||"SEM";
+  document.getElementById("fData").value        = p.dataPrisao||"";
+  document.getElementById("fAp").value          = p.ap||"";
+  document.getElementById("fApf").value         = p.apf||"";
+  document.getElementById("fMpu").value         = p.mpu||"";
+  document.getElementById("fIp").value          = p.ip||"";
+  document.getElementById("fOutro").value       = p.outro||"";
+  document.getElementById("fDecData").value     = p.decretacaoData||"";
+  document.getElementById("fDecId").value       = p.decretacaoId||"";
+  document.getElementById("fReavaliacao").value = p.reavaliacao||"";
+  document.getElementById("fObs").value         = p.observacoes||"";
   const pp = (p.processoPrincipal||"").toLowerCase();
   ["ap","apf","mpu","ip","outro"].forEach(t => setDecRow(t, pp===t));
   renderIndefRows();
@@ -326,9 +264,7 @@ window.openEdit = function(key) {
   setTimeout(()=>document.getElementById("fNome").focus(),50);
 };
 
-window.closeModal = function() {
-  document.getElementById("modal").style.display = "none";
-};
+window.closeModal = function() { document.getElementById("modal").style.display = "none"; };
 
 function clearForm() {
   ["fNome","fAp","fApf","fMpu","fIp","fOutro","fData","fDecData","fDecId","fReavaliacao","fObs"]
@@ -337,7 +273,6 @@ function clearForm() {
   ["ap","apf","mpu","ip","outro"].forEach(t=>setDecRow(t,false));
   renderIndefRows();
 }
-
 function setDecRow(t, active) {
   const row = document.getElementById("prow-"+t);
   const rad = document.getElementById("rad-"+t);
@@ -346,10 +281,7 @@ function setDecRow(t, active) {
   if (rad) rad.checked = active;
   if (bdg) { bdg.textContent = active?"⚑ decreto":""; bdg.className = active?"dbadge":""; }
 }
-
-window.selectDec = function(tipo) {
-  ["ap","apf","mpu","ip","outro"].forEach(t => setDecRow(t, t===tipo));
-};
+window.selectDec = function(tipo) { ["ap","apf","mpu","ip","outro"].forEach(t=>setDecRow(t,t===tipo)); };
 
 window.saveForm = async function() {
   const nome = document.getElementById("fNome").value.trim();
@@ -357,29 +289,24 @@ window.saveForm = async function() {
   const pp = ["ap","apf","mpu","ip","outro"].find(t=>document.getElementById("rad-"+t)?.checked)||"";
   const indefFinal = indeferimentos.filter(x=>x.data||x.id);
   const data = {
-    nome,
-    cumprimento:       document.getElementById("fCumprimento").value,
-    dataPrisao:        document.getElementById("fData").value.trim(),
-    ap:                document.getElementById("fAp").value.trim(),
-    apf:               document.getElementById("fApf").value.trim(),
-    mpu:               document.getElementById("fMpu").value.trim(),
-    ip:                document.getElementById("fIp").value.trim(),
-    outro:             document.getElementById("fOutro").value.trim(),
+    nome, cumprimento: document.getElementById("fCumprimento").value,
+    dataPrisao: document.getElementById("fData").value.trim(),
+    ap: document.getElementById("fAp").value.trim(),
+    apf: document.getElementById("fApf").value.trim(),
+    mpu: document.getElementById("fMpu").value.trim(),
+    ip: document.getElementById("fIp").value.trim(),
+    outro: document.getElementById("fOutro").value.trim(),
     processoPrincipal: pp,
-    decretacaoData:    document.getElementById("fDecData").value.trim(),
-    decretacaoId:      document.getElementById("fDecId").value.trim(),
-    indeferimentos:    indefFinal.length ? indefFinal : [],
-    reavaliacao:       document.getElementById("fReavaliacao").value.trim(),
-    observacoes:       document.getElementById("fObs").value.trim(),
-    updatedAt:         serverTimestamp()
+    decretacaoData: document.getElementById("fDecData").value.trim(),
+    decretacaoId: document.getElementById("fDecId").value.trim(),
+    indeferimentos: indefFinal.length ? indefFinal : [],
+    reavaliacao: document.getElementById("fReavaliacao").value.trim(),
+    observacoes: document.getElementById("fObs").value.trim(),
+    updatedAt: firebase.database.ServerValue.TIMESTAMP
   };
   try {
-    if (editingKey) {
-      await update(ref(db,`presos/${editingKey}`), data);
-    } else {
-      data.createdAt = serverTimestamp();
-      await push(presosRef, data);
-    }
+    if (editingKey) { await db.ref(`presos/${editingKey}`).update(data); }
+    else { await presosRef.push(data); }
     closeModal();
   } catch(e) { alert("Erro ao salvar: "+e.message); }
 };
@@ -389,12 +316,10 @@ window.confirmDelete = function(key, nome) {
   document.getElementById("delModal").style.display = "flex";
   document.getElementById("delConfirmBtn").onclick = async () => {
     document.getElementById("delModal").style.display = "none";
-    remove(ref(db,`presos/${key}`)).catch(e=>alert("Erro: "+e.message));
+    db.ref(`presos/${key}`).remove().catch(e=>alert("Erro: "+e.message));
   };
 };
-window.closeDelModal = function() {
-  document.getElementById("delModal").style.display = "none";
-};
+window.closeDelModal = function() { document.getElementById("delModal").style.display = "none"; };
 
 window.exportCSV = function() {
   const cols = ["Nome","Cumprimento","Processo Decreto","AP","APF","MPU","IP","Data Prisão","Duração (dias)","Reavaliação","Data Decretação","ID Decretação","Indeferimentos","Observações"];
@@ -416,7 +341,6 @@ window.manualRefresh = function() {
   btn.disabled=true; btn.textContent="⟳ Atualizando…";
   setTimeout(()=>{renderTable();btn.disabled=false;btn.textContent="⟳ Atualizar";},600);
 };
-
 window.syncData = function() {
   const btn = document.getElementById("btnSync");
   btn.disabled=true; btn.textContent="⟳ Sincronizando…";
@@ -424,17 +348,19 @@ window.syncData = function() {
 };
 
 document.addEventListener("DOMContentLoaded", () => {
+  ["authEmail","authPass","authPass2"].forEach(id => {
+    document.getElementById(id)?.addEventListener("keydown", e => { if(e.key==="Enter") doAuth(); });
+  });
   document.getElementById("searchInput").addEventListener("input", renderTable);
   document.getElementById("ordenar").addEventListener("change", renderTable);
   document.querySelectorAll(".filter-btn").forEach(btn => {
     btn.addEventListener("click", () => {
       document.querySelectorAll(".filter-btn").forEach(b=>b.classList.remove("active"));
-      btn.classList.add("active");
-      renderTable();
+      btn.classList.add("active"); renderTable();
     });
   });
   document.getElementById("modal").addEventListener("click", e=>{
-    if (e.target===document.getElementById("modal")) closeModal();
+    if(e.target===document.getElementById("modal")) closeModal();
   });
   document.addEventListener("keydown", e=>{ if(e.key==="Escape") closeModal(); });
 });
@@ -455,17 +381,14 @@ document.addEventListener("DOMContentLoaded", () => {
   --com-bg:#d1fae5;--com-c:#065f46;
   --sem-bg:#fef3c7;--sem-c:#b45309;
   --radius:8px;--radius-sm:5px;
-  --mono:'IBM Plex Mono',monospace;
-  --sans:'IBM Plex Sans',sans-serif;
+  --mono:'IBM Plex Mono',monospace;--sans:'IBM Plex Sans',sans-serif;
 }
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
 body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:100vh;}
-
 .app-header{background:var(--header);color:#fff;padding:.85rem 1.5rem;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100;box-shadow:0 2px 8px rgba(0,0,0,.2);}
 .header-left h1{font-size:1.2rem;font-weight:700;}
 .header-left p{font-size:.67rem;color:var(--muted);margin-top:.1rem;font-family:var(--mono);}
 .btn-shared{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);color:#fff;padding:.35rem .85rem;border-radius:var(--radius-sm);cursor:pointer;font-size:.76rem;font-family:var(--sans);display:flex;align-items:center;gap:.4rem;}
-
 .toolbar{background:var(--surface);border-bottom:1px solid var(--border);padding:.6rem 1.5rem;display:flex;align-items:center;gap:.45rem;flex-wrap:wrap;}
 .search-wrap{position:relative;flex:1;min-width:180px;max-width:400px;}
 .search-wrap svg{position:absolute;left:.6rem;top:50%;transform:translateY(-50%);pointer-events:none;}
@@ -477,14 +400,12 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:1
 .btn-sync{background:#dbeafe;color:#1d4ed8;border-color:#bfdbfe;}
 .btn-novo{background:#dcfce7;color:#15803d;border-color:#bbf7d0;}
 .btn-csv{background:#e0f2fe;color:#0369a1;border-color:#bae6fd;}
-
 .filters-bar{background:var(--surface);border-bottom:1px solid var(--border);padding:.45rem 1.5rem;display:flex;align-items:center;gap:.38rem;flex-wrap:wrap;}
 .filter-btn{padding:.25rem .7rem;border-radius:20px;border:1.5px solid var(--border);background:#fff;cursor:pointer;font-family:var(--sans);font-size:.74rem;font-weight:500;color:var(--text2);transition:all .18s;}
 .filter-btn.active{background:var(--primary);border-color:var(--primary);color:#fff;}
 .filter-btn:not(.active):hover{border-color:var(--primary);color:var(--primary);}
 .order-wrap{margin-left:auto;display:flex;align-items:center;gap:.38rem;font-size:.74rem;color:var(--text2);}
 .order-wrap select{padding:.25rem .48rem;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-family:var(--sans);font-size:.74rem;color:var(--text);outline:none;}
-
 .table-wrap{padding:.9rem 1.5rem;overflow-x:auto;}
 table{width:100%;border-collapse:collapse;background:var(--surface);border-radius:var(--radius);overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.07);font-size:.79rem;}
 thead tr{background:#f8fafc;border-bottom:2px solid var(--border);}
@@ -493,7 +414,6 @@ tbody tr.row-main{cursor:pointer;transition:background .12s;}
 tbody tr.row-main:hover{background:#f1f5f9 !important;}
 tbody tr.row-alt{background:var(--row-alt);}
 td{padding:.68rem .75rem;vertical-align:top;border-bottom:1px solid var(--border);}
-
 .nome-cell{font-weight:600;text-transform:uppercase;font-size:.77rem;line-height:1.4;min-width:140px;max-width:180px;}
 .decreto-cell{min-width:130px;max-width:170px;}
 .hint-click{font-size:.63rem;color:var(--muted);font-weight:400;margin-top:2px;text-transform:none;}
@@ -507,7 +427,6 @@ td{padding:.68rem .75rem;vertical-align:top;border-bottom:1px solid var(--border
 .acoes-cell{white-space:nowrap;text-align:center;}
 .empty-row{text-align:center;padding:2.5rem;color:var(--muted);}
 .proc-num{font-family:var(--mono);font-size:.7rem;color:var(--text);margin-top:3px;display:block;word-break:break-all;}
-
 .acc-row{display:none;}
 .acc-row.acc-open{display:table-row;}
 .acc-td{padding:0 !important;border-bottom:1px solid var(--border) !important;}
@@ -524,10 +443,8 @@ td{padding:.68rem .75rem;vertical-align:top;border-bottom:1px solid var(--border
 .acc-info-label{font-weight:600;color:var(--text);font-family:var(--sans);}
 .acc-info-num{color:var(--muted);margin-right:.3rem;}
 .acc-obs{font-size:.73rem;color:var(--text2);line-height:1.55;white-space:pre-wrap;}
-
 .chev{display:inline-block;transition:transform .2s;font-style:normal;font-size:.82rem;margin-right:4px;color:var(--muted);}
 .chev-open{transform:rotate(90deg);}
-
 .badge{display:inline-block;padding:.17rem .48rem;border-radius:4px;font-size:.65rem;font-weight:700;font-family:var(--mono);}
 .badge-com{background:var(--com-bg);color:var(--com-c);}
 .badge-sem{background:var(--sem-bg);color:var(--sem-c);}
@@ -538,14 +455,11 @@ td{padding:.68rem .75rem;vertical-align:top;border-bottom:1px solid var(--border
 .tip{background:var(--tip-bg);color:var(--tip-c);}
 .toutro{background:#f1f5f9;color:#475569;}
 .dbadge{background:var(--dec-bg);color:var(--dec-c);border:.5px solid var(--dec-br);font-size:.65rem;font-weight:700;padding:1px 7px;border-radius:3px;font-family:var(--mono);}
-
 .btn-icon{background:none;border:none;cursor:pointer;font-size:.88rem;padding:.2rem .28rem;border-radius:4px;transition:background .12s;}
 .btn-icon:hover{background:var(--border);}
-
 .app-footer{background:var(--surface);border-top:1px solid var(--border);padding:.48rem 1.5rem;display:flex;align-items:center;justify-content:space-between;font-size:.68rem;color:var(--text2);font-family:var(--mono);position:sticky;bottom:0;}
 .sync-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:#16a34a;margin-right:.3rem;animation:pulse 2s infinite;}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
-
 #modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:999;align-items:center;justify-content:center;padding:1rem;}
 .modal-box{background:var(--surface);border-radius:var(--radius);box-shadow:0 10px 40px rgba(0,0,0,.18);width:100%;max-width:560px;max-height:92vh;overflow-y:auto;animation:slideUp .2s ease;}
 @keyframes slideUp{from{transform:translateY(14px);opacity:0}to{transform:translateY(0);opacity:1}}
@@ -570,7 +484,6 @@ td{padding:.68rem .75rem;vertical-align:top;border-bottom:1px solid var(--border
 .prow .ptag{flex-shrink:0;width:36px;text-align:center;}
 .prow input[type=text]{flex:1;border:none;background:transparent;outline:none;font-family:var(--mono);font-size:.75rem;color:var(--text);padding:0;}
 .prow input[type=text]::placeholder{color:var(--muted);font-style:italic;}
-
 .indef-row{display:grid;grid-template-columns:1fr 1fr auto;gap:.4rem;align-items:center;margin-bottom:.35rem;}
 .indef-data,.indef-id{padding:.4rem .55rem;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-family:var(--mono);font-size:.76rem;color:var(--text);outline:none;}
 .indef-data:focus,.indef-id:focus{border-color:var(--primary);}
@@ -580,12 +493,10 @@ td{padding:.68rem .75rem;vertical-align:top;border-bottom:1px solid var(--border
 .btn-add-indef:hover{background:#f5f3ff;border-color:var(--primary);}
 .indef-header{display:grid;grid-template-columns:1fr 1fr auto;gap:.4rem;margin-bottom:.2rem;}
 .indef-header span{font-size:.65rem;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.04em;}
-
 .modal-footer{padding:.78rem 1.2rem;border-top:1px solid var(--border);display:flex;gap:.45rem;justify-content:flex-end;}
 .btn-cancel{background:var(--bg);color:var(--text2);border:1.5px solid var(--border);}
 .btn-save{background:var(--primary);color:#fff;border-color:var(--primary);}
 .btn-save:hover{background:var(--primary-h);opacity:1;}
-
 #delModal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1000;align-items:center;justify-content:center;padding:1rem;}
 .del-box{background:var(--surface);border-radius:var(--radius);box-shadow:0 10px 40px rgba(0,0,0,.18);width:100%;max-width:380px;overflow:hidden;animation:slideUp .2s ease;}
 .del-header{background:#dc2626;padding:.85rem 1.2rem;display:flex;align-items:center;justify-content:space-between;}
@@ -602,8 +513,6 @@ td{padding:.68rem .75rem;vertical-align:top;border-bottom:1px solid var(--border
 .btn-del-cancel:hover{background:var(--border);}
 .btn-del-confirm{background:#dc2626;color:#fff;border:none;padding:.45rem 1.2rem;border-radius:var(--radius-sm);cursor:pointer;font-family:var(--sans);font-size:.82rem;font-weight:600;}
 .btn-del-confirm:hover{background:#b91c1c;}
-
-/* ── Login screen ── */
 #loginScreen{display:none;position:fixed;inset:0;background:var(--header);z-index:9999;align-items:center;justify-content:center;padding:1rem;}
 .login-box{background:var(--surface);border-radius:var(--radius);box-shadow:0 10px 40px rgba(0,0,0,.3);width:100%;max-width:380px;overflow:hidden;}
 .login-top{background:var(--header);padding:1.5rem 1.5rem 1rem;text-align:center;}
@@ -621,7 +530,6 @@ td{padding:.68rem .75rem;vertical-align:top;border-bottom:1px solid var(--border
 .btn-logout:hover{background:rgba(255,255,255,.22);}
 .user-info{display:flex;align-items:center;gap:.6rem;}
 .user-email{color:var(--muted);font-size:.7rem;font-family:var(--mono);}
-
 @media(max-width:768px){
   .app-header,.toolbar,.filters-bar,.table-wrap,.app-footer{padding-left:.9rem;padding-right:.9rem;}
   .row-2,.indef-row,.indef-header{grid-template-columns:1fr;}
@@ -631,7 +539,6 @@ td{padding:.68rem .75rem;vertical-align:top;border-bottom:1px solid var(--border
 </head>
 <body>
 
-<!-- ── Tela de Login ─────────────────────────────────────────────── -->
 <div id="loginScreen">
   <div class="login-box">
     <div class="login-top">
@@ -639,64 +546,56 @@ td{padding:.68rem .75rem;vertical-align:top;border-bottom:1px solid var(--border
       <p>3ª Vara de Violência Doméstica e Familiar</p>
     </div>
     <div class="auth-tabs">
-      <button class="auth-tab active" data-tab="entrar"   onclick="switchTab('entrar')">Entrar</button>
-      <button class="auth-tab"        data-tab="cadastro" onclick="switchTab('cadastro')">Criar conta</button>
+      <button class="auth-tab active" data-tab="entrar" onclick="switchTab('entrar')">Entrar</button>
+      <button class="auth-tab" data-tab="cadastro" onclick="switchTab('cadastro')">Criar conta</button>
     </div>
     <div class="login-body">
-      <div class="field-group">
-        <label>E-mail</label>
-        <input id="authEmail" type="email" placeholder="seu@email.com" autocomplete="username" />
-      </div>
-      <div class="field-group">
-        <label>Senha</label>
-        <input id="authPass" type="password" placeholder="••••••••" autocomplete="current-password" />
-      </div>
-      <div class="field-group" id="pass2wrap" style="display:none;">
-        <label>Confirmar senha</label>
-        <input id="authPass2" type="password" placeholder="••••••••" autocomplete="new-password" />
-      </div>
+      <div class="field-group"><label>E-mail</label><input id="authEmail" type="email" placeholder="seu@email.com" autocomplete="username"/></div>
+      <div class="field-group"><label>Senha</label><input id="authPass" type="password" placeholder="••••••••" autocomplete="current-password"/></div>
+      <div class="field-group" id="pass2wrap" style="display:none;"><label>Confirmar senha</label><input id="authPass2" type="password" placeholder="••••••••" autocomplete="new-password"/></div>
       <div id="authErr"></div>
       <button id="authBtn" class="btn-auth" onclick="doAuth()">Entrar</button>
     </div>
   </div>
 </div>
 
-<!-- ── App principal ─────────────────────────────────────────────── -->
 <div id="appScreen" style="display:none;">
 
 <header class="app-header">
   <div class="header-left">
-    <h1>Sistema de Gestão de Presos</h1>
+    <h1>Sistema de Controle de Presos</h1>
     <p id="lastMod">Carregando…</p>
   </div>
-  <button class="btn-shared">
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-    Modo Compartilhado
-  </button>
-  <div class="user-info">
-    <span class="user-email" id="userEmail"></span>
-    <button class="btn-logout" onclick="doLogout()">
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-      Sair
+  <div style="display:flex;align-items:center;gap:.75rem;">
+    <button class="btn-shared">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+      Modo Compartilhado
     </button>
+    <div class="user-info">
+      <span class="user-email" id="userEmail"></span>
+      <button class="btn-logout" onclick="doLogout()">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        Sair
+      </button>
+    </div>
   </div>
 </header>
 
 <div class="toolbar">
   <div class="search-wrap">
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-    <input id="searchInput" class="search-input" type="text" placeholder="Buscar…" autocomplete="off" />
+    <input id="searchInput" class="search-input" type="text" placeholder="Buscar…" autocomplete="off"/>
   </div>
   <button id="btnAtualizar" class="btn btn-atualizar" onclick="manualRefresh()">⟳ Atualizar</button>
-  <button id="btnSync"      class="btn btn-sync"      onclick="syncData()">⇄ Sync Data</button>
-  <button                   class="btn btn-novo"      onclick="openNew()">+ Novo</button>
-  <button                   class="btn btn-csv"       onclick="exportCSV()">↓ Exportar CSV</button>
+  <button id="btnSync" class="btn btn-sync" onclick="syncData()">⇄ Sync Data</button>
+  <button class="btn btn-novo" onclick="openNew()">+ Novo</button>
+  <button class="btn btn-csv" onclick="exportCSV()">↓ Exportar CSV</button>
 </div>
 
 <div class="filters-bar">
   <button id="btnTodos" class="filter-btn active" data-filtro="todos">Todos</button>
-  <button id="btnCom"   class="filter-btn"        data-filtro="com">Com Cumprimento</button>
-  <button id="btnSem"   class="filter-btn"        data-filtro="sem">Sem Cumprimento</button>
+  <button id="btnCom" class="filter-btn" data-filtro="com">Com Cumprimento</button>
+  <button id="btnSem" class="filter-btn" data-filtro="sem">Sem Cumprimento</button>
   <div class="order-wrap">
     <span>Ordenar por:</span>
     <select id="ordenar">
@@ -710,14 +609,9 @@ td{padding:.68rem .75rem;vertical-align:top;border-bottom:1px solid var(--border
   <table>
     <thead>
       <tr>
-        <th>Status</th>
-        <th>Custodiado</th>
-        <th>Processo c/ Decreto</th>
-        <th>Data Prisão</th>
-        <th>Duração</th>
-        <th>Reavaliação</th>
-        <th>Observações</th>
-        <th>Ações</th>
+        <th>Status</th><th>Custodiado</th><th>Processo c/ Decreto</th>
+        <th>Data Prisão</th><th>Duração</th><th>Reavaliação</th>
+        <th>Observações</th><th>Ações</th>
       </tr>
     </thead>
     <tbody id="tbody">
@@ -738,117 +632,56 @@ td{padding:.68rem .75rem;vertical-align:top;border-bottom:1px solid var(--border
       <button class="modal-close" onclick="closeModal()">✕</button>
     </div>
     <div class="modal-body">
-
       <div>
         <div class="sec-label">Dados do custodiado</div>
         <div style="display:flex;flex-direction:column;gap:.58rem;">
-          <div class="field-group">
-            <label>Nome completo *</label>
-            <input id="fNome" type="text" placeholder="Nome completo em maiúsculas" />
-          </div>
+          <div class="field-group"><label>Nome completo *</label><input id="fNome" type="text" placeholder="Nome completo em maiúsculas"/></div>
           <div class="row-2">
-            <div class="field-group">
-              <label>Status</label>
-              <select id="fCumprimento">
-                <option value="SEM">SEM cumprimento</option>
-                <option value="COM">COM cumprimento</option>
-              </select>
-            </div>
-            <div class="field-group">
-              <label>Data de prisão</label>
-              <input id="fData" type="text" placeholder="DD/MM/AAAA" />
-            </div>
+            <div class="field-group"><label>Status</label><select id="fCumprimento"><option value="SEM">SEM cumprimento</option><option value="COM">COM cumprimento</option></select></div>
+            <div class="field-group"><label>Data de prisão</label><input id="fData" type="text" placeholder="DD/MM/AAAA"/></div>
           </div>
-          <div class="field-group">
-            <label>Reavaliação</label>
-            <input id="fReavaliacao" type="text" placeholder="DD/MM/AAAA" style="max-width:180px;" />
-          </div>
+          <div class="field-group"><label>Reavaliação</label><input id="fReavaliacao" type="text" placeholder="DD/MM/AAAA" style="max-width:180px;"/></div>
         </div>
       </div>
-
       <div>
         <div class="sec-label">Processos</div>
         <div class="prow-hint">Preencha os processos e marque onde a prisão foi decretada</div>
         <div class="proc-rows">
-          <div class="prow" id="prow-ap" onclick="selectDec('ap')">
-            <input type="radio" id="rad-ap" name="decreto" onclick="event.stopPropagation();selectDec('ap')" />
-            <span class="ptag tap">AP</span>
-            <input type="text" id="fAp" placeholder="Número da Ação Penal" onclick="event.stopPropagation()" />
-            <span id="pdec-ap"></span>
-          </div>
-          <div class="prow" id="prow-apf" onclick="selectDec('apf')">
-            <input type="radio" id="rad-apf" name="decreto" onclick="event.stopPropagation();selectDec('apf')" />
-            <span class="ptag tapf">APF</span>
-            <input type="text" id="fApf" placeholder="Número do APF" onclick="event.stopPropagation()" />
-            <span id="pdec-apf"></span>
-          </div>
-          <div class="prow" id="prow-mpu" onclick="selectDec('mpu')">
-            <input type="radio" id="rad-mpu" name="decreto" onclick="event.stopPropagation();selectDec('mpu')" />
-            <span class="ptag tmpu">MPU</span>
-            <input type="text" id="fMpu" placeholder="Número da MPU" onclick="event.stopPropagation()" />
-            <span id="pdec-mpu"></span>
-          </div>
-          <div class="prow" id="prow-ip" onclick="selectDec('ip')">
-            <input type="radio" id="rad-ip" name="decreto" onclick="event.stopPropagation();selectDec('ip')" />
-            <span class="ptag tip">IP</span>
-            <input type="text" id="fIp" placeholder="Número do IP" onclick="event.stopPropagation()" />
-            <span id="pdec-ip"></span>
-          </div>
-          <div class="prow" id="prow-outro" onclick="selectDec('outro')">
-            <input type="radio" id="rad-outro" name="decreto" onclick="event.stopPropagation();selectDec('outro')" />
-            <span class="ptag toutro">OUTRO</span>
-            <input type="text" id="fOutro" placeholder="Descreva o tipo e número do processo" onclick="event.stopPropagation()" />
-            <span id="pdec-outro"></span>
-          </div>
+          <div class="prow" id="prow-ap" onclick="selectDec('ap')"><input type="radio" id="rad-ap" name="decreto" onclick="event.stopPropagation();selectDec('ap')"/><span class="ptag tap">AP</span><input type="text" id="fAp" placeholder="Número da Ação Penal" onclick="event.stopPropagation()"/><span id="pdec-ap"></span></div>
+          <div class="prow" id="prow-apf" onclick="selectDec('apf')"><input type="radio" id="rad-apf" name="decreto" onclick="event.stopPropagation();selectDec('apf')"/><span class="ptag tapf">APF</span><input type="text" id="fApf" placeholder="Número do APF" onclick="event.stopPropagation()"/><span id="pdec-apf"></span></div>
+          <div class="prow" id="prow-mpu" onclick="selectDec('mpu')"><input type="radio" id="rad-mpu" name="decreto" onclick="event.stopPropagation();selectDec('mpu')"/><span class="ptag tmpu">MPU</span><input type="text" id="fMpu" placeholder="Número da MPU" onclick="event.stopPropagation()"/><span id="pdec-mpu"></span></div>
+          <div class="prow" id="prow-ip" onclick="selectDec('ip')"><input type="radio" id="rad-ip" name="decreto" onclick="event.stopPropagation();selectDec('ip')"/><span class="ptag tip">IP</span><input type="text" id="fIp" placeholder="Número do IP" onclick="event.stopPropagation()"/><span id="pdec-ip"></span></div>
+          <div class="prow" id="prow-outro" onclick="selectDec('outro')"><input type="radio" id="rad-outro" name="decreto" onclick="event.stopPropagation();selectDec('outro')"/><span class="ptag toutro">OUTRO</span><input type="text" id="fOutro" placeholder="Descreva o tipo e número do processo" onclick="event.stopPropagation()"/><span id="pdec-outro"></span></div>
         </div>
       </div>
-
       <div>
         <div class="sec-label">Decisão de Decretação / Conversão</div>
         <div class="row-2">
-          <div class="field-group">
-            <label>Data da decisão</label>
-            <input id="fDecData" type="text" placeholder="DD/MM/AAAA" />
-          </div>
-          <div class="field-group">
-            <label>ID da decisão</label>
-            <input id="fDecId" type="text" placeholder="Ex: 529669237" />
-          </div>
+          <div class="field-group"><label>Data da decisão</label><input id="fDecData" type="text" placeholder="DD/MM/AAAA"/></div>
+          <div class="field-group"><label>ID da decisão</label><input id="fDecId" type="text" placeholder="Ex: 529669237"/></div>
         </div>
       </div>
-
       <div>
         <div class="sec-label">Indeferimento(s) de Revogação</div>
-        <div class="indef-header">
-          <span>Data da decisão</span>
-          <span>ID da decisão</span>
-          <span></span>
-        </div>
+        <div class="indef-header"><span>Data da decisão</span><span>ID da decisão</span><span></span></div>
         <div id="indefWrap"></div>
         <button class="btn-add-indef" onclick="addIndefRow()">+ Adicionar indeferimento</button>
       </div>
-
       <div>
         <div class="sec-label">Observações</div>
-        <div class="field-group">
-          <textarea id="fObs" placeholder="Histórico, decisões, audiências…"></textarea>
-        </div>
+        <div class="field-group"><textarea id="fObs" placeholder="Histórico, decisões, audiências…"></textarea></div>
       </div>
-
     </div>
     <div class="modal-footer">
       <button class="btn btn-cancel" onclick="closeModal()">Cancelar</button>
-      <button class="btn btn-save"   onclick="saveForm()">💾 Salvar</button>
+      <button class="btn btn-save" onclick="saveForm()">💾 Salvar</button>
     </div>
   </div>
 </div>
 
 <div id="delModal">
   <div class="del-box">
-    <div class="del-header">
-      <span>Confirmar Exclusão</span>
-      <button class="del-close" onclick="closeDelModal()">✕</button>
-    </div>
+    <div class="del-header"><span>Confirmar Exclusão</span><button class="del-close" onclick="closeDelModal()">✕</button></div>
     <div class="del-body">
       <div class="del-icon">🗑️</div>
       <h3>Tem certeza?</h3>
@@ -863,6 +696,5 @@ td{padding:.68rem .75rem;vertical-align:top;border-bottom:1px solid var(--border
 </div>
 
 </div><!-- /appScreen -->
-
 </body>
 </html>
