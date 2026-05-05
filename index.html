@@ -5,12 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Sistema de Controle de Presos</title>
 
-<script type="module">
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getDatabase, ref, onValue, get, push, update, remove, serverTimestamp }
-  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+<!-- Firebase compat (necessário para Auth junto com SDK modular) -->
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
 
-const firebaseConfig = {
+<script>
+// ── Firebase compat init ─────────────────────────────────────────────────────
+const firebaseConfigCompat = {
   apiKey: "AIzaSyCAEhARwMkl2mabrku0BsDHBVGXfq_3bSg",
   authDomain: "monitoramento-eletronico-9dfbd.firebaseapp.com",
   databaseURL: "https://monitoramento-eletronico-9dfbd-default-rtdb.firebaseio.com",
@@ -19,8 +21,82 @@ const firebaseConfig = {
   messagingSenderId: "374021798667",
   appId: "1:374021798667:web:59413e5700d2e73264400e"
 };
+firebase.initializeApp(firebaseConfigCompat);
+const auth = firebase.auth();
+const dbCompat = firebase.database();
 
-const app = initializeApp(firebaseConfig);
+// ── Auth state ───────────────────────────────────────────────────────────────
+auth.onAuthStateChanged(user => {
+  if (user) {
+    document.getElementById("loginScreen").style.display = "none";
+    document.getElementById("appScreen").style.display  = "block";
+    document.getElementById("userEmail").textContent = user.email;
+  } else {
+    document.getElementById("loginScreen").style.display = "flex";
+    document.getElementById("appScreen").style.display  = "none";
+  }
+});
+
+function doAuth() {
+  const tab   = document.querySelector(".auth-tab.active").dataset.tab;
+  const email = document.getElementById("authEmail").value.trim();
+  const pass  = document.getElementById("authPass").value;
+  const pass2 = document.getElementById("authPass2").value;
+  const errEl = document.getElementById("authErr");
+  errEl.textContent = "";
+
+  if (!email || !pass) { errEl.textContent = "Preencha e-mail e senha."; return; }
+
+  if (tab === "cadastro") {
+    if (pass !== pass2) { errEl.textContent = "As senhas não coincidem."; return; }
+    if (pass.length < 6) { errEl.textContent = "A senha deve ter ao menos 6 caracteres."; return; }
+    auth.createUserWithEmailAndPassword(email, pass)
+      .catch(e => { errEl.textContent = authMsg(e.code); });
+  } else {
+    auth.signInWithEmailAndPassword(email, pass)
+      .catch(e => { errEl.textContent = authMsg(e.code); });
+  }
+}
+
+function doLogout() {
+  auth.signOut();
+}
+
+function switchTab(tab) {
+  document.querySelectorAll(".auth-tab").forEach(b => b.classList.toggle("active", b.dataset.tab===tab));
+  document.getElementById("pass2wrap").style.display = tab==="cadastro" ? "block" : "none";
+  document.getElementById("authErr").textContent = "";
+  document.getElementById("authBtn").textContent = tab==="cadastro" ? "Criar conta" : "Entrar";
+}
+
+function authMsg(code) {
+  const msgs = {
+    "auth/user-not-found":      "Usuário não encontrado.",
+    "auth/wrong-password":      "Senha incorreta.",
+    "auth/invalid-email":       "E-mail inválido.",
+    "auth/email-already-in-use":"Este e-mail já está em uso.",
+    "auth/too-many-requests":   "Muitas tentativas. Tente mais tarde.",
+    "auth/invalid-credential":  "E-mail ou senha incorretos.",
+  };
+  return msgs[code] || "Erro ao autenticar. Tente novamente.";
+}
+
+// permitir Enter no formulário
+document.addEventListener("DOMContentLoaded", () => {
+  ["authEmail","authPass","authPass2"].forEach(id => {
+    document.getElementById(id)?.addEventListener("keydown", e => {
+      if (e.key === "Enter") doAuth();
+    });
+  });
+});
+</script>
+
+<script type="module">
+import { getApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getDatabase, ref, onValue, push, update, remove, serverTimestamp }
+  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+const app = getApp();
 const db  = getDatabase(app);
 const presosRef = ref(db, "presos");
 
@@ -527,6 +603,25 @@ td{padding:.68rem .75rem;vertical-align:top;border-bottom:1px solid var(--border
 .btn-del-confirm{background:#dc2626;color:#fff;border:none;padding:.45rem 1.2rem;border-radius:var(--radius-sm);cursor:pointer;font-family:var(--sans);font-size:.82rem;font-weight:600;}
 .btn-del-confirm:hover{background:#b91c1c;}
 
+/* ── Login screen ── */
+#loginScreen{display:none;position:fixed;inset:0;background:var(--header);z-index:9999;align-items:center;justify-content:center;padding:1rem;}
+.login-box{background:var(--surface);border-radius:var(--radius);box-shadow:0 10px 40px rgba(0,0,0,.3);width:100%;max-width:380px;overflow:hidden;}
+.login-top{background:var(--header);padding:1.5rem 1.5rem 1rem;text-align:center;}
+.login-top h1{color:#fff;font-size:1.1rem;font-weight:700;margin-bottom:.2rem;}
+.login-top p{color:var(--muted);font-size:.75rem;}
+.auth-tabs{display:flex;border-bottom:1px solid var(--border);}
+.auth-tab{flex:1;padding:.6rem;background:none;border:none;cursor:pointer;font-family:var(--sans);font-size:.8rem;font-weight:500;color:var(--text2);transition:all .15s;}
+.auth-tab.active{color:var(--primary);border-bottom:2px solid var(--primary);font-weight:700;}
+.login-body{padding:1.25rem 1.5rem;display:flex;flex-direction:column;gap:.65rem;}
+.login-body .field-group input{width:100%;}
+#authErr{font-size:.75rem;color:var(--red);min-height:1rem;text-align:center;}
+.btn-auth{background:var(--primary);color:#fff;border:none;padding:.55rem;border-radius:var(--radius-sm);cursor:pointer;font-family:var(--sans);font-size:.85rem;font-weight:600;width:100%;transition:background .15s;}
+.btn-auth:hover{background:var(--primary-h);}
+.btn-logout{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);color:#fff;padding:.32rem .75rem;border-radius:var(--radius-sm);cursor:pointer;font-size:.74rem;font-family:var(--sans);display:flex;align-items:center;gap:.35rem;}
+.btn-logout:hover{background:rgba(255,255,255,.22);}
+.user-info{display:flex;align-items:center;gap:.6rem;}
+.user-email{color:var(--muted);font-size:.7rem;font-family:var(--mono);}
+
 @media(max-width:768px){
   .app-header,.toolbar,.filters-bar,.table-wrap,.app-footer{padding-left:.9rem;padding-right:.9rem;}
   .row-2,.indef-row,.indef-header{grid-template-columns:1fr;}
@@ -535,6 +630,39 @@ td{padding:.68rem .75rem;vertical-align:top;border-bottom:1px solid var(--border
 </style>
 </head>
 <body>
+
+<!-- ── Tela de Login ─────────────────────────────────────────────── -->
+<div id="loginScreen">
+  <div class="login-box">
+    <div class="login-top">
+      <h1>Sistema de Controle de Presos</h1>
+      <p>3ª Vara de Violência Doméstica e Familiar</p>
+    </div>
+    <div class="auth-tabs">
+      <button class="auth-tab active" data-tab="entrar"   onclick="switchTab('entrar')">Entrar</button>
+      <button class="auth-tab"        data-tab="cadastro" onclick="switchTab('cadastro')">Criar conta</button>
+    </div>
+    <div class="login-body">
+      <div class="field-group">
+        <label>E-mail</label>
+        <input id="authEmail" type="email" placeholder="seu@email.com" autocomplete="username" />
+      </div>
+      <div class="field-group">
+        <label>Senha</label>
+        <input id="authPass" type="password" placeholder="••••••••" autocomplete="current-password" />
+      </div>
+      <div class="field-group" id="pass2wrap" style="display:none;">
+        <label>Confirmar senha</label>
+        <input id="authPass2" type="password" placeholder="••••••••" autocomplete="new-password" />
+      </div>
+      <div id="authErr"></div>
+      <button id="authBtn" class="btn-auth" onclick="doAuth()">Entrar</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── App principal ─────────────────────────────────────────────── -->
+<div id="appScreen" style="display:none;">
 
 <header class="app-header">
   <div class="header-left">
@@ -545,6 +673,13 @@ td{padding:.68rem .75rem;vertical-align:top;border-bottom:1px solid var(--border
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
     Modo Compartilhado
   </button>
+  <div class="user-info">
+    <span class="user-email" id="userEmail"></span>
+    <button class="btn-logout" onclick="doLogout()">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+      Sair
+    </button>
+  </div>
 </header>
 
 <div class="toolbar">
@@ -726,6 +861,8 @@ td{padding:.68rem .75rem;vertical-align:top;border-bottom:1px solid var(--border
     </div>
   </div>
 </div>
+
+</div><!-- /appScreen -->
 
 </body>
 </html>
