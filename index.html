@@ -24,13 +24,30 @@ const auth = firebase.auth();
 const db   = firebase.database();
 const presosRef = db.ref("presos");
 
+// ── E-mails autorizados ───────────────────────────────────────────────────────
+const EMAILS_AUTORIZADOS = [
+  "desantos@tjba.jus.br",
+  "gosdsantos@tjba.jus.br",
+  "jmcleite@tjba.jus.br",
+  "ahgooliveira@tjba.jus.br",
+  "pneto@tjba.jus.br",
+  "mcrribeiro@tjba.jus.br",
+  "asimaro@tjba.jus.br",
+  "acteixeira@tjba.jus.br"
+];
+
 let allPresos  = [];
 let editingKey = null;
 let indeferimentos = [];
 
-// ── Auth ─────────────────────────────────────────────────────────────────────
+// ── Auth ──────────────────────────────────────────────────────────────────────
 auth.onAuthStateChanged(user => {
   if (user) {
+    if (!EMAILS_AUTORIZADOS.includes(user.email.toLowerCase())) {
+      auth.signOut();
+      document.getElementById("authErr").textContent = "Acesso não autorizado para este e-mail.";
+      return;
+    }
     document.getElementById("loginScreen").style.display = "none";
     document.getElementById("appScreen").style.display  = "block";
     document.getElementById("userEmail").textContent = user.email;
@@ -43,12 +60,13 @@ auth.onAuthStateChanged(user => {
 
 function doAuth() {
   const tab   = document.querySelector(".auth-tab.active").dataset.tab;
-  const email = document.getElementById("authEmail").value.trim();
+  const email = document.getElementById("authEmail").value.trim().toLowerCase();
   const pass  = document.getElementById("authPass").value;
   const pass2 = document.getElementById("authPass2").value;
   const errEl = document.getElementById("authErr");
   errEl.textContent = "";
   if (!email || !pass) { errEl.textContent = "Preencha e-mail e senha."; return; }
+  if (!EMAILS_AUTORIZADOS.includes(email)) { errEl.textContent = "Acesso não autorizado para este e-mail."; return; }
   if (tab === "cadastro") {
     if (pass !== pass2) { errEl.textContent = "As senhas não coincidem."; return; }
     if (pass.length < 6) { errEl.textContent = "A senha deve ter ao menos 6 caracteres."; return; }
@@ -120,8 +138,12 @@ function decretoCell(p) {
   const t = (p.processoPrincipal||"").toLowerCase();
   if (!t || !TIPO_LABEL[t]) return '<span style="color:#94a3b8">—</span>';
   const num = p[PROC_FIELD[t]] || "";
-  return `<span class="ptag ${TIPO_CSS[t]}">${TIPO_LABEL[t]}</span>`
-       + (num ? `<span class="proc-num">${esc(num)}</span>` : "");
+  let html = `<span class="ptag ${TIPO_CSS[t]}">${TIPO_LABEL[t]}</span>`;
+  if (num) html += `<span class="proc-num">${esc(num)}</span>`;
+  if (p.processoFiscalizacao) {
+    html += `<span class="fbadge">👁 fiscalização</span><span class="proc-num">${esc(p.processoFiscalizacao)}</span>`;
+  }
+  return html;
 }
 
 // ── Render ────────────────────────────────────────────────────────────────────
@@ -131,7 +153,7 @@ function renderTable() {
   const ordem  = document.getElementById("ordenar")?.value||"alfa";
 
   let lista = allPresos.filter(p =>
-    [p.nome,p.ap,p.apf,p.mpu,p.ip,p.observacoes].join(" ").toLowerCase().includes(q)
+    [p.nome,p.ap,p.apf,p.mpu,p.ip,p.observacoes,p.processoFiscalizacao].join(" ").toLowerCase().includes(q)
   );
   if (filtro==="com") lista = lista.filter(p=>p.cumprimento==="COM");
   if (filtro==="sem") lista = lista.filter(p=>p.cumprimento==="SEM");
@@ -155,7 +177,9 @@ function renderTable() {
   tbody.innerHTML = lista.map((p,i) => {
     const dias    = calcDias(p.dataPrisao);
     const diasStr = dias !== null ? `${dias} dias` : "—";
-    const dataRed = dias !== null && dias > 60;
+    const dataBlue = dias !== null && dias >= 60 && dias < 90;
+    const dataRed  = dias !== null && dias >= 90;
+    const dataCls  = dataRed ? "data-red" : dataBlue ? "data-blue" : "data-normal";
     const pp      = (p.processoPrincipal||"").toLowerCase();
 
     const procs = [
@@ -166,13 +190,18 @@ function renderTable() {
     const temProcs = procs.some(x=>(p[x.id]||"").trim());
 
     const accProcs = procs.map(x => {
-      const isDec = pp===x.id;
-      const num   = p[x.id]||"";
+      const isDec  = pp===x.id;
+      const isFisc = isDec && p.processoFiscalizacao;
+      const num    = p[x.id]||"";
       return `<div class="acc-proc-row${isDec?" acc-sel":""}">
         <span class="ptag ${x.css}">${x.label}</span>
         <span class="acc-num">${num ? esc(num) : '<em class="acc-empty">não cadastrado</em>'}</span>
         ${isDec?'<span class="dbadge">⚑ decreto</span>':""}
-      </div>`;
+      </div>${isFisc?`<div class="acc-proc-row acc-fisc">
+        <span class="ptag tfisc">FISC.</span>
+        <span class="acc-num">${esc(p.processoFiscalizacao)}</span>
+        <span class="fbadge">👁 fiscalização</span>
+      </div>`:""}`;
     }).join("");
 
     const decData = p.decretacaoData ? `<span class="acc-info-label">Data:</span> ${esc(p.decretacaoData)}` : "";
@@ -180,7 +209,12 @@ function renderTable() {
     const decBlock = (decData||decId) ? `<div class="acc-section"><div class="acc-section-title">Decisão de Decretação / Conversão</div><div class="acc-info-row">${decData}${decData&&decId?' &nbsp;|&nbsp; ':''}${decId}</div></div>` : "";
 
     const indefs = Array.isArray(p.indeferimentos) ? p.indeferimentos : [];
-    const indefBlock = indefs.length ? `<div class="acc-section"><div class="acc-section-title">Indeferimento(s) de Revogação</div>${indefs.map((x,i)=>`<div class="acc-info-row"><span class="acc-info-num">${i+1}.</span>${x.data?`<span class="acc-info-label">Data:</span> ${esc(x.data)}`:''}${x.data&&x.id?' &nbsp;|&nbsp; ':''}${x.id?`<span class="acc-info-label">ID:</span> ${esc(x.id)}`:''}</div>`).join("")}</div>` : "";
+    const indefBlock = indefs.length ? `<div class="acc-section"><div class="acc-section-title">Indeferimento(s) de Revogação</div>${indefs.map((x,idx)=>{
+      const tipo = x.tipo==="F"
+        ? `<span class="indef-tipo-badge indef-f" title="Processo de Fiscalização">F</span>`
+        : `<span class="indef-tipo-badge indef-d" title="Processo do Decreto">D</span>`;
+      return `<div class="acc-info-row"><span class="acc-info-num">${idx+1}.</span>${tipo} ${x.data?`<span class="acc-info-label">Data:</span> ${esc(x.data)}`:''}${x.data&&x.id?' &nbsp;|&nbsp; ':''}${x.id?`<span class="acc-info-label">ID:</span> ${esc(x.id)}`:''}</div>`;
+    }).join("")}</div>` : "";
 
     const obsBlock = p.observacoes ? `<div class="acc-section"><div class="acc-section-title">Observações</div><div class="acc-obs">${esc(p.observacoes)}</div></div>` : "";
     const obsTrunc = p.observacoes ? `<span class="obs-trunc">${esc(p.observacoes)}</span>` : "—";
@@ -191,7 +225,7 @@ function renderTable() {
       <td style="text-align:center"><span class="badge badge-${(p.cumprimento||"SEM").toLowerCase()}">${p.cumprimento||"SEM"}</span></td>
       <td class="nome-cell"><i class="chev" id="chev-${p._key}">›</i>${esc(p.nome||"")}${temProcs?'<div class="hint-click">clique para expandir</div>':""}</td>
       <td class="decreto-cell">${decretoCell(p)}</td>
-      <td class="${dataRed?"data-red":"data-normal"}">${esc(p.dataPrisao||"—")}</td>
+      <td class="${dataCls}">${esc(p.dataPrisao||"—")}</td>
       <td class="dur-cell">${diasStr}</td>
       <td class="reav-cell${reavAlert?" reav-alert":""}">${esc(reavStr)}</td>
       <td class="obs-cell">${obsTrunc}</td>
@@ -218,17 +252,28 @@ window.toggleAcc = function(key) {
 };
 
 // ── Indeferimentos ────────────────────────────────────────────────────────────
-window.addIndefRow = function() { indeferimentos.push({data:"",id:""}); renderIndefRows(); };
+window.addIndefRow = function() {
+  indeferimentos.push({data:"", id:"", tipo:"D"});
+  renderIndefRows();
+};
 window.removeIndefRow = function(idx) { indeferimentos.splice(idx,1); renderIndefRows(); };
+window.toggleIndefTipo = function(idx) {
+  indeferimentos[idx].tipo = indeferimentos[idx].tipo === "D" ? "F" : "D";
+  renderIndefRows();
+};
+
 function renderIndefRows() {
   const wrap = document.getElementById("indefWrap");
   if (!wrap) return;
-  wrap.innerHTML = indeferimentos.map((x,i) => `
-    <div class="indef-row">
+  wrap.innerHTML = indeferimentos.map((x,i) => {
+    const isF = x.tipo === "F";
+    return `<div class="indef-row">
+      <button class="indef-tipo-btn ${isF?"indef-tipo-f":"indef-tipo-d"}" onclick="toggleIndefTipo(${i})" title="${isF?"Processo de Fiscalização — clique para alternar":"Processo do Decreto — clique para alternar"}">${isF?"F":"D"}</button>
       <input type="text" class="indef-data" placeholder="DD/MM/AAAA" value="${esc(x.data)}" oninput="indeferimentos[${i}].data=this.value"/>
       <input type="text" class="indef-id" placeholder="ID da decisão" value="${esc(x.id)}" oninput="indeferimentos[${i}].id=this.value"/>
       <button class="indef-rm" onclick="removeIndefRow(${i})">✕</button>
-    </div>`).join("");
+    </div>`;
+  }).join("");
 }
 
 // ── Modal ─────────────────────────────────────────────────────────────────────
@@ -243,20 +288,21 @@ window.openNew = function() {
 window.openEdit = function(key) {
   const p = allPresos.find(x=>x._key===key); if (!p) return;
   editingKey = key;
-  indeferimentos = Array.isArray(p.indeferimentos) ? p.indeferimentos.map(x=>({...x})) : [];
+  indeferimentos = Array.isArray(p.indeferimentos) ? p.indeferimentos.map(x=>({...x, tipo:x.tipo||"D"})) : [];
   document.getElementById("modalTitle").textContent = "Editar preso";
-  document.getElementById("fNome").value        = p.nome||"";
-  document.getElementById("fCumprimento").value = p.cumprimento||"SEM";
-  document.getElementById("fData").value        = p.dataPrisao||"";
-  document.getElementById("fAp").value          = p.ap||"";
-  document.getElementById("fApf").value         = p.apf||"";
-  document.getElementById("fMpu").value         = p.mpu||"";
-  document.getElementById("fIp").value          = p.ip||"";
-  document.getElementById("fOutro").value       = p.outro||"";
-  document.getElementById("fDecData").value     = p.decretacaoData||"";
-  document.getElementById("fDecId").value       = p.decretacaoId||"";
-  document.getElementById("fReavaliacao").value = p.reavaliacao||"";
-  document.getElementById("fObs").value         = p.observacoes||"";
+  document.getElementById("fNome").value              = p.nome||"";
+  document.getElementById("fCumprimento").value       = p.cumprimento||"SEM";
+  document.getElementById("fData").value              = p.dataPrisao||"";
+  document.getElementById("fAp").value                = p.ap||"";
+  document.getElementById("fApf").value               = p.apf||"";
+  document.getElementById("fMpu").value               = p.mpu||"";
+  document.getElementById("fIp").value                = p.ip||"";
+  document.getElementById("fOutro").value             = p.outro||"";
+  document.getElementById("fDecData").value           = p.decretacaoData||"";
+  document.getElementById("fDecId").value             = p.decretacaoId||"";
+  document.getElementById("fReavaliacao").value       = p.reavaliacao||"";
+  document.getElementById("fProcessoFisc").value      = p.processoFiscalizacao||"";
+  document.getElementById("fObs").value               = p.observacoes||"";
   const pp = (p.processoPrincipal||"").toLowerCase();
   ["ap","apf","mpu","ip","outro"].forEach(t => setDecRow(t, pp===t));
   renderIndefRows();
@@ -267,7 +313,7 @@ window.openEdit = function(key) {
 window.closeModal = function() { document.getElementById("modal").style.display = "none"; };
 
 function clearForm() {
-  ["fNome","fAp","fApf","fMpu","fIp","fOutro","fData","fDecData","fDecId","fReavaliacao","fObs"]
+  ["fNome","fAp","fApf","fMpu","fIp","fOutro","fData","fDecData","fDecId","fReavaliacao","fProcessoFisc","fObs"]
     .forEach(id=>document.getElementById(id).value="");
   document.getElementById("fCumprimento").value = "SEM";
   ["ap","apf","mpu","ip","outro"].forEach(t=>setDecRow(t,false));
@@ -297,6 +343,7 @@ window.saveForm = async function() {
     ip: document.getElementById("fIp").value.trim(),
     outro: document.getElementById("fOutro").value.trim(),
     processoPrincipal: pp,
+    processoFiscalizacao: document.getElementById("fProcessoFisc").value.trim(),
     decretacaoData: document.getElementById("fDecData").value.trim(),
     decretacaoId: document.getElementById("fDecId").value.trim(),
     indeferimentos: indefFinal.length ? indefFinal : [],
@@ -322,11 +369,11 @@ window.confirmDelete = function(key, nome) {
 window.closeDelModal = function() { document.getElementById("delModal").style.display = "none"; };
 
 window.exportCSV = function() {
-  const cols = ["Nome","Cumprimento","Processo Decreto","AP","APF","MPU","IP","Data Prisão","Duração (dias)","Reavaliação","Data Decretação","ID Decretação","Indeferimentos","Observações"];
+  const cols = ["Nome","Cumprimento","Processo Decreto","Processo Fiscalização","AP","APF","MPU","IP","Data Prisão","Duração (dias)","Reavaliação","Data Decretação","ID Decretação","Indeferimentos","Observações"];
   const rows = allPresos.map(p => {
     const dias = calcDias(p.dataPrisao);
-    const indefs = (p.indeferimentos||[]).map(x=>`${x.data||''} ID:${x.id||''}`).join('; ');
-    return [p.nome,p.cumprimento,p.processoPrincipal,p.ap,p.apf,p.mpu,p.ip,p.dataPrisao,dias??"",p.reavaliacao,p.decretacaoData,p.decretacaoId,indefs,p.observacoes]
+    const indefs = (p.indeferimentos||[]).map(x=>`[${x.tipo||"D"}] ${x.data||''} ID:${x.id||''}`).join('; ');
+    return [p.nome,p.cumprimento,p.processoPrincipal,p.processoFiscalizacao,p.ap,p.apf,p.mpu,p.ip,p.dataPrisao,dias??"",p.reavaliacao,p.decretacaoData,p.decretacaoId,indefs,p.observacoes]
       .map(v=>`"${String(v||"").replace(/"/g,'""')}"`);
   });
   const csv = [cols.map(c=>`"${c}"`).join(","),...rows.map(r=>r.join(","))].join("\n");
@@ -378,6 +425,7 @@ document.addEventListener("DOMContentLoaded", () => {
   --tmpu-bg:#fce7f3;--tmpu-c:#9d174d;
   --tip-bg:#d1fae5;--tip-c:#065f46;
   --dec-bg:#fef3c7;--dec-c:#b45309;--dec-br:#fde68a;
+  --fisc-bg:#fee2e2;--fisc-c:#991b1b;--fisc-br:#fca5a5;
   --com-bg:#d1fae5;--com-c:#065f46;
   --sem-bg:#fef3c7;--sem-c:#b45309;
   --radius:8px;--radius-sm:5px;
@@ -415,9 +463,10 @@ tbody tr.row-main:hover{background:#f1f5f9 !important;}
 tbody tr.row-alt{background:var(--row-alt);}
 td{padding:.68rem .75rem;vertical-align:top;border-bottom:1px solid var(--border);}
 .nome-cell{font-weight:600;text-transform:uppercase;font-size:.77rem;line-height:1.4;min-width:140px;max-width:180px;}
-.decreto-cell{min-width:130px;max-width:170px;}
+.decreto-cell{min-width:130px;max-width:200px;}
 .hint-click{font-size:.63rem;color:var(--muted);font-weight:400;margin-top:2px;text-transform:none;}
 .data-red{font-family:var(--mono);font-size:.74rem;color:var(--red);font-weight:500;white-space:nowrap;}
+.data-blue{font-family:var(--mono);font-size:.74rem;color:#1d4ed8;font-weight:500;white-space:nowrap;}
 .data-normal{font-family:var(--mono);font-size:.74rem;color:var(--text2);white-space:nowrap;}
 .dur-cell{font-family:var(--mono);font-size:.74rem;color:var(--text2);white-space:nowrap;}
 .reav-cell{font-family:var(--mono);font-size:.74rem;color:var(--text2);white-space:nowrap;min-width:90px;}
@@ -434,11 +483,12 @@ td{padding:.68rem .75rem;vertical-align:top;border-bottom:1px solid var(--border
 .acc-title{font-size:.63rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;}
 .acc-proc-row{display:flex;align-items:center;gap:8px;padding:3px 5px;border-radius:var(--radius-sm);border:.5px solid transparent;}
 .acc-proc-row.acc-sel{background:#fff;border-color:var(--primary);}
+.acc-proc-row.acc-fisc{background:#fff5f5;border-color:var(--fisc-br);}
 .acc-num{font-family:var(--mono);font-size:.7rem;color:var(--text);flex:1;word-break:break-all;}
 .acc-empty{color:var(--muted);font-style:italic;font-size:.68rem;}
 .acc-section{background:#fff;border-radius:var(--radius-sm);border:.5px solid var(--border);padding:.45rem .65rem;}
 .acc-section-title{font-size:.62rem;font-weight:700;color:var(--primary);text-transform:uppercase;letter-spacing:.06em;margin-bottom:.3rem;}
-.acc-info-row{font-size:.72rem;color:var(--text2);font-family:var(--mono);margin-bottom:.2rem;}
+.acc-info-row{font-size:.72rem;color:var(--text2);font-family:var(--mono);margin-bottom:.2rem;display:flex;align-items:center;gap:.3rem;}
 .acc-info-row:last-child{margin-bottom:0;}
 .acc-info-label{font-weight:600;color:var(--text);font-family:var(--sans);}
 .acc-info-num{color:var(--muted);margin-right:.3rem;}
@@ -454,7 +504,19 @@ td{padding:.68rem .75rem;vertical-align:top;border-bottom:1px solid var(--border
 .tmpu{background:var(--tmpu-bg);color:var(--tmpu-c);}
 .tip{background:var(--tip-bg);color:var(--tip-c);}
 .toutro{background:#f1f5f9;color:#475569;}
+.tfisc{background:var(--fisc-bg);color:var(--fisc-c);}
 .dbadge{background:var(--dec-bg);color:var(--dec-c);border:.5px solid var(--dec-br);font-size:.65rem;font-weight:700;padding:1px 7px;border-radius:3px;font-family:var(--mono);}
+.fbadge{background:var(--fisc-bg);color:var(--fisc-c);border:.5px solid var(--fisc-br);font-size:.65rem;font-weight:700;padding:1px 7px;border-radius:3px;font-family:var(--mono);}
+/* badge D/F nos indeferimentos */
+.indef-tipo-badge{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:3px;font-size:.62rem;font-weight:700;font-family:var(--mono);flex-shrink:0;}
+.indef-d{background:var(--dec-bg);color:var(--dec-c);border:.5px solid var(--dec-br);}
+.indef-f{background:var(--fisc-bg);color:var(--fisc-c);border:.5px solid var(--fisc-br);}
+/* botão D/F clicável no modal */
+.indef-tipo-btn{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:4px;font-size:.7rem;font-weight:700;font-family:var(--mono);cursor:pointer;border:1.5px solid;flex-shrink:0;transition:all .15s;}
+.indef-tipo-d{background:var(--dec-bg);color:var(--dec-c);border-color:var(--dec-br);}
+.indef-tipo-d:hover{background:#fde68a;}
+.indef-tipo-f{background:var(--fisc-bg);color:var(--fisc-c);border-color:var(--fisc-br);}
+.indef-tipo-f:hover{background:#fca5a5;}
 .btn-icon{background:none;border:none;cursor:pointer;font-size:.88rem;padding:.2rem .28rem;border-radius:4px;transition:background .12s;}
 .btn-icon:hover{background:var(--border);}
 .app-footer{background:var(--surface);border-top:1px solid var(--border);padding:.48rem 1.5rem;display:flex;align-items:center;justify-content:space-between;font-size:.68rem;color:var(--text2);font-family:var(--mono);position:sticky;bottom:0;}
@@ -474,6 +536,9 @@ td{padding:.68rem .75rem;vertical-align:top;border-bottom:1px solid var(--border
 .field-group input,.field-group select,.field-group textarea{padding:.45rem .62rem;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-family:var(--sans);font-size:.82rem;color:var(--text);outline:none;transition:border-color .15s;background:#fff;}
 .field-group input:focus,.field-group select:focus,.field-group textarea:focus{border-color:var(--primary);}
 .field-group textarea{resize:vertical;min-height:90px;}
+.fisc-field input{border-color:var(--fisc-br);background:#fff5f5;}
+.fisc-field input:focus{border-color:var(--fisc-c);}
+.fisc-field label{color:var(--fisc-c);}
 .row-2{display:grid;grid-template-columns:1fr 1fr;gap:.7rem;}
 .prow-hint{font-size:.67rem;color:var(--muted);margin-bottom:.42rem;}
 .proc-rows{display:flex;flex-direction:column;gap:.36rem;}
@@ -484,15 +549,18 @@ td{padding:.68rem .75rem;vertical-align:top;border-bottom:1px solid var(--border
 .prow .ptag{flex-shrink:0;width:36px;text-align:center;}
 .prow input[type=text]{flex:1;border:none;background:transparent;outline:none;font-family:var(--mono);font-size:.75rem;color:var(--text);padding:0;}
 .prow input[type=text]::placeholder{color:var(--muted);font-style:italic;}
-.indef-row{display:grid;grid-template-columns:1fr 1fr auto;gap:.4rem;align-items:center;margin-bottom:.35rem;}
+.indef-row{display:grid;grid-template-columns:auto 1fr 1fr auto;gap:.4rem;align-items:center;margin-bottom:.35rem;}
 .indef-data,.indef-id{padding:.4rem .55rem;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-family:var(--mono);font-size:.76rem;color:var(--text);outline:none;}
 .indef-data:focus,.indef-id:focus{border-color:var(--primary);}
 .indef-rm{background:none;border:none;cursor:pointer;color:var(--muted);font-size:.8rem;padding:.2rem .35rem;border-radius:4px;}
 .indef-rm:hover{background:#fee2e2;color:var(--red);}
 .btn-add-indef{background:none;border:1.5px dashed var(--border);color:var(--primary);font-family:var(--sans);font-size:.74rem;font-weight:600;padding:.38rem .75rem;border-radius:var(--radius-sm);cursor:pointer;width:100%;text-align:center;margin-top:.2rem;}
 .btn-add-indef:hover{background:#f5f3ff;border-color:var(--primary);}
-.indef-header{display:grid;grid-template-columns:1fr 1fr auto;gap:.4rem;margin-bottom:.2rem;}
+.indef-header{display:grid;grid-template-columns:auto 1fr 1fr auto;gap:.4rem;margin-bottom:.2rem;}
 .indef-header span{font-size:.65rem;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.04em;}
+.indef-tipo-hint{font-size:.64rem;color:var(--muted);margin-bottom:.3rem;}
+.indef-tipo-hint .indef-d-ex{background:var(--dec-bg);color:var(--dec-c);border:.5px solid var(--dec-br);padding:1px 5px;border-radius:3px;font-family:var(--mono);font-weight:700;font-size:.62rem;}
+.indef-tipo-hint .indef-f-ex{background:var(--fisc-bg);color:var(--fisc-c);border:.5px solid var(--fisc-br);padding:1px 5px;border-radius:3px;font-family:var(--mono);font-weight:700;font-size:.62rem;}
 .modal-footer{padding:.78rem 1.2rem;border-top:1px solid var(--border);display:flex;gap:.45rem;justify-content:flex-end;}
 .btn-cancel{background:var(--bg);color:var(--text2);border:1.5px solid var(--border);}
 .btn-save{background:var(--primary);color:#fff;border-color:var(--primary);}
@@ -609,7 +677,7 @@ td{padding:.68rem .75rem;vertical-align:top;border-bottom:1px solid var(--border
   <table>
     <thead>
       <tr>
-        <th>Status</th><th>Custodiado</th><th>Processo c/ Decreto</th>
+        <th>Status</th><th>Custodiado</th><th>Decreto / Fiscalização</th>
         <th>Data Prisão</th><th>Duração</th><th>Reavaliação</th>
         <th>Observações</th><th>Ações</th>
       </tr>
@@ -632,6 +700,8 @@ td{padding:.68rem .75rem;vertical-align:top;border-bottom:1px solid var(--border
       <button class="modal-close" onclick="closeModal()">✕</button>
     </div>
     <div class="modal-body">
+
+      <!-- Dados -->
       <div>
         <div class="sec-label">Dados do custodiado</div>
         <div style="display:flex;flex-direction:column;gap:.58rem;">
@@ -643,6 +713,8 @@ td{padding:.68rem .75rem;vertical-align:top;border-bottom:1px solid var(--border
           <div class="field-group"><label>Reavaliação</label><input id="fReavaliacao" type="text" placeholder="DD/MM/AAAA" style="max-width:180px;"/></div>
         </div>
       </div>
+
+      <!-- Processos -->
       <div>
         <div class="sec-label">Processos</div>
         <div class="prow-hint">Preencha os processos e marque onde a prisão foi decretada</div>
@@ -653,7 +725,14 @@ td{padding:.68rem .75rem;vertical-align:top;border-bottom:1px solid var(--border
           <div class="prow" id="prow-ip" onclick="selectDec('ip')"><input type="radio" id="rad-ip" name="decreto" onclick="event.stopPropagation();selectDec('ip')"/><span class="ptag tip">IP</span><input type="text" id="fIp" placeholder="Número do IP" onclick="event.stopPropagation()"/><span id="pdec-ip"></span></div>
           <div class="prow" id="prow-outro" onclick="selectDec('outro')"><input type="radio" id="rad-outro" name="decreto" onclick="event.stopPropagation();selectDec('outro')"/><span class="ptag toutro">OUTRO</span><input type="text" id="fOutro" placeholder="Descreva o tipo e número do processo" onclick="event.stopPropagation()"/><span id="pdec-outro"></span></div>
         </div>
+        <!-- Processo de fiscalização -->
+        <div class="field-group fisc-field" style="margin-top:.65rem;">
+          <label>👁 Processo de Fiscalização <span style="font-weight:400;text-transform:none;font-size:.65rem;">(se diferente do decreto)</span></label>
+          <input id="fProcessoFisc" type="text" placeholder="Ex: APF 0001234-56.2026.8.05.0001"/>
+        </div>
       </div>
+
+      <!-- Decisão -->
       <div>
         <div class="sec-label">Decisão de Decretação / Conversão</div>
         <div class="row-2">
@@ -661,16 +740,29 @@ td{padding:.68rem .75rem;vertical-align:top;border-bottom:1px solid var(--border
           <div class="field-group"><label>ID da decisão</label><input id="fDecId" type="text" placeholder="Ex: 529669237"/></div>
         </div>
       </div>
+
+      <!-- Indeferimentos -->
       <div>
         <div class="sec-label">Indeferimento(s) de Revogação</div>
-        <div class="indef-header"><span>Data da decisão</span><span>ID da decisão</span><span></span></div>
+        <div class="indef-tipo-hint">
+          Clique em <span class="indef-d-ex">D</span> para decreto ou <span class="indef-f-ex">F</span> para fiscalização — indica em qual processo foi a decisão.
+        </div>
+        <div class="indef-header">
+          <span>D/F</span>
+          <span>Data da decisão</span>
+          <span>ID da decisão</span>
+          <span></span>
+        </div>
         <div id="indefWrap"></div>
         <button class="btn-add-indef" onclick="addIndefRow()">+ Adicionar indeferimento</button>
       </div>
+
+      <!-- Observações -->
       <div>
         <div class="sec-label">Observações</div>
         <div class="field-group"><textarea id="fObs" placeholder="Histórico, decisões, audiências…"></textarea></div>
       </div>
+
     </div>
     <div class="modal-footer">
       <button class="btn btn-cancel" onclick="closeModal()">Cancelar</button>
